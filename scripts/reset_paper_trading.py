@@ -27,10 +27,9 @@
 
 ## 重要後果（執行前請讀）
 
-- **重啟後會立刻重建倉位**：`.env` 的 `PC_*` 若保留，全輪替腿的「未持股成員每天嘗試建立部位」規則
+- **重啟後會立刻重建倉位**：`.env` 的 `PC_*` 若保留，主程式的「已選中但未持股 ⇒ 每日嘗試建倉」規則
   會在下一個交易日 09:00 起把同樣的檔買回來（受 `MAX_DAILY_TRADES`／資金上限／大盤年線過濾約束）。
-  要完全空白請加 `--clear-portfolio`，再自己跑選股（`scripts/monthly_rebalance_picker.py`／
-  `scripts/manual_rotation_pick.py`）產生新名單。
+  要完全空白請加 `--clear-portfolio`，再自己跑選股（`scripts/monthly_selfselect_run.py --apply`）產生新名單。
 - **績效歷史會歸零**：儀表板與已實現損益從零起算（舊資料在備份裡）。
 - **必須在實盤機的 container 內跑**（`logs/` 才是 VM 上那份）；在本機 PC 跑只會清到本機的 `logs/`。
 """
@@ -54,14 +53,11 @@ STATE_FILES = (
     'daily_trades.json',
     'last_trade_times.json',
     'report_state.json',
-    'rotation_pending.json',
-    'rotation_hold.json',
-    'rotation_day_buys.json',
+    'drawdown_hold.json',
     'selfselect_auto.json',
     'auto_resolved.json',
-    'modelc_filled.json',
+    'selfselect_filled.json',
     'processed_capital.json',
-    'inst_momentum_screening.json',
     'voided_trades.jsonl',
     'books_audit.jsonl',
 )
