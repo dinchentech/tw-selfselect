@@ -18,5 +18,13 @@ jobs:
           pip install -r requirements.txt
       - name: Unit tests
         run: python -m unittest discover -s test -p 'test_*.py'
-      - name: Static check (undefined names in the live trader)
-        run: python -m pyflakes selfselect_trader.py core scripts strategies data utils
+      # 只把「未定義名稱」當錯誤：那是真 bug（新版 Python 只在特定路徑才會炸）。
+      # import 未使用／f-string 缺佔位符是風格問題，不擋 CI。
+      - name: Static check (undefined names only)
+        run: |
+          out=$(python -m pyflakes selfselect_trader.py core scripts strategies data utils || true)
+          echo "$out"
+          if echo "$out" | grep -qi "undefined name"; then
+            echo "::error::發現未定義名稱（會導致執行期 NameError）"
+            exit 1
+          fi
