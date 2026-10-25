@@ -6,8 +6,9 @@
 *.pem
 *.key
 *.whl
+# 玉山 SDK 不在 PyPI ⇒ esun_sdk/ 底下的 whl 進版控（p12 與 config*.ini 仍不進）
+!esun_sdk/*.whl
 esun_sdk/*.p12
-esun_sdk/*.whl
 esun_sdk/config*.ini*
 backups/*
 !backups/.gitkeep
