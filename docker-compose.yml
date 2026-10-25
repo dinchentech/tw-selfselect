@@ -1,0 +1,19 @@
+services:
+  selfselect:
+    image: tw-selfselect:latest
+    container_name: tw_selfselect_bot
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+      - ./.env:/app/.env:rw
+      - ./backups:/app/backups
+      - ./cache:/app/cache
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

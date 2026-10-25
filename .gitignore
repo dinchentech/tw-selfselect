@@ -1,0 +1,46 @@
+# ── 機密：永不進版控 ────────────────────────────────────────────────
+.env
+.env.*
+!.env.example.txt
+*.p12
+*.pem
+*.key
+*.whl
+esun_sdk/*.p12
+esun_sdk/*.whl
+esun_sdk/config*.ini*
+backups/*
+!backups/.gitkeep
+capital.txt
+
+# ── 執行期狀態（持倉／成交／儀表板，bot 產生）────────────────────────
+logs/*
+!logs/.gitkeep
+data/inst_momentum_state.json
+data/*.csv
+
+# ── 資料快取（可由程式重建；含第三方資料，不散布）───────────────────
+cache/*
+results/*
+!results/.gitkeep
+tmp_gold/
+
+# ── Python ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── 其他 ────────────────────────────────────────────────────────────
+.idea/
+node_modules/
+*:Zone.Identifier
+*.bak
+*.patch

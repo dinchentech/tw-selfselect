@@ -1,0 +1,13 @@
+finmind==1.8.2
+pandas==2.2.1
+numpy==1.26.4
+python-telegram-bot==20.7
+requests==2.31.0
+matplotlib==3.8.3
+tqdm
+python-dotenv==1.1.0
+yfinance
+openpyxl
+
+# 開發／測試用：實盤主程式「未定義名稱」靜態檢查（test_live_trader_no_undefined_names.py）
+pyflakes>=3.0
