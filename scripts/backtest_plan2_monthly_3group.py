@@ -34,10 +34,15 @@ if os.path.isdir(_ROOT):
 from core.backtest_rules import snapshot_env_overrides, apply_env_overrides, strategy_after_exit  # noqa: E402
 _ENV_OVERRIDES = snapshot_env_overrides()
 
+# `.env` 一律以「檔案」為準（override=True）——見下方長註解；**必須在參數讀取之前**，
+# 而「套回」則必須在**最後一次**載入 `.env` 之後（否則套回後又被蓋掉）。
+from dotenv import load_dotenv  # noqa: E402
+load_dotenv(override=True)
+
 import pandas as pd, numpy as np
 from core.cache_io import load_cache_or_raw
 from core.candidate_pool import build_quarterly_pool
-import scripts.stock_selector_grid as ssg   # noqa: E402  ← 這個 import 會載入 .env
+import scripts.stock_selector_grid as ssg   # noqa: E402  ← 這個 import 也會載一次 .env
 
 apply_env_overrides(_ENV_OVERRIDES)          # 明確指定的 env > .env（.env 只當預設來源）
 from strategies.bollinger import bollinger_reverse_strategy
@@ -94,13 +99,6 @@ HOT_EXIT_GROUPS = set(x.strip() for x in os.getenv("HOT_EXIT_GROUPS", "normal,me
 # 規則本體在 core/backtest_rules.py（純函式、可獨立測試，不必匯入本檔的重型快取載入）。
 from core.backtest_rules import signal_strategy, stop_hit, stop_loss_env  # noqa: E402
 
-# ⚠️ .env 一律以「檔案」為準（override=True）。原因（2026-10-01 實測）：
-#   容器用 docker-compose `env_file` 在**建立容器時**把變數注入 process env，之後主機上改 `.env`
-#   不會更新既有的 process env；而 python-dotenv 預設 `override=False` ⇒ 不會覆蓋它們
-#   ⇒ 用 `docker exec` 跑的工具（picker／selector／報表…）會讀到**容器啟動當時**的舊值。
-#   主程式 `live_trader_multi.py` 也是 `load_dotenv(override=True)`（V4.36 熱重載）——這裡保持一致。
-from dotenv import load_dotenv  # noqa: E402
-load_dotenv(override=True)
 STOP_LOSS_PCT = stop_loss_env("STOP_LOSS_PCT", 0.0)
 
 GROUPS = {

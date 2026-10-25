@@ -66,13 +66,25 @@ class TestHarnessWiring(unittest.TestCase):
         src = HARNESS.read_text(encoding="utf-8")
         self.assertIn("snapshot_env_overrides", src, "回測腳本未使用快照函式")
         self.assertIn("apply_env_overrides", src, "回測腳本未把快照套回（事故會重演）")
-        i_snap = src.index("snapshot_env_overrides()")
-        i_import = src.index("import scripts.stock_selector_grid as ssg")
-        i_apply = src.index("apply_env_overrides(_ENV_OVERRIDES)", i_snap + 1)
+        import ast
+        tree = ast.parse(src)
+        stmts = [ast.get_source_segment(src, n) or "" for n in tree.body]
+
+        def idx(needle):
+            for i, seg in enumerate(stmts):
+                if needle in seg:
+                    return i
+            self.fail(f"找不到模組層敘述：{needle}")
+
+        i_snap = idx("snapshot_env_overrides(")
+        i_import = idx("import scripts.stock_selector_grid as ssg")
+        i_apply = idx("apply_env_overrides(")
         self.assertLess(i_snap, i_import,
                         "快照必須在 import stock_selector_grid 之前（該 import 會載 .env 並蓋掉）")
         self.assertLess(i_import, i_apply, "套回必須在 import 之後")
-        self.assertLess(i_apply, src.index('POOL_N = int(os.getenv("POOL_N"'),
+        self.assertLess(idx("load_dotenv(override=True)"), i_apply,
+                        "套回必須在**最後一次**載入 .env 之後（否則又被蓋掉）")
+        self.assertLess(i_apply, idx('POOL_N = int(os.getenv("POOL_N"'),
                         "套回必須在讀取參數（POOL_N 等）之前")
 
 
