@@ -15,12 +15,12 @@
 #     `docker save | gzip | ssh 'gunzip | docker load'`（e2-micro 只有 1GB RAM，
 #     遠端只跑原生 gunzip/docker load，不在 VM 上跑 gcloud 串流，避免 OOM）
 #   · 遠端目錄預設 `~/tw-selfselect`；舊的 `~/tw-autotrader` **原地保留** ⇒ 回滾一行指令
+#   · whl 已進版控（玉山下載頁公開、免登入）⇒ 建 image 只需 git；不進版控的
+#     p12 與舊 image 內的 `config.simulation.ini` 只在缺檔時自動補
 #   · 第一次部署（遠端 .env 不存在）會自動：
-#       ① 從 `~/tw-autotrader` 拉 esun_sdk（whl／p12）與舊 image 內的
-#          `config.simulation.ini` 回本機（建 image 與登入都需要）
-#       ② 用 `scripts/make_selfselect_env.py` 產生 `~/tw-selfselect/.env`
+#       ① 用 `scripts/make_selfselect_env.py` 產生 `~/tw-selfselect/.env`
 #          （只帶白名單鍵＋secrets；PC_ 清空＝重置模式；MODELC_EXEC_MODE→SELFSELECT_EXEC_MODE）
-#       ③ 把舊 `cache/` 複製到新目錄（cache schema 兩邊都是 v2）
+#       ② 把舊 `cache/` 複製到新目錄（cache schema 兩邊都是 v2）
 #   · 部署成功會比對 build fingerprint（core/version.py）；不符就 exit 1
 #   · **刻意不做 `docker system prune`**：舊 image 留著，回滾才不必重新 build
 # ══════════════════════════════════════════════════════════════════════════
@@ -36,7 +36,6 @@ OLD_DIR="${OLD_DIR:-~/tw-autotrader}"
 OLD_CONTAINER="${OLD_CONTAINER:-tw_autotrader_bot}"
 IMAGE="${IMAGE:-tw-selfselect}"
 CONTAINER="${CONTAINER:-tw_selfselect_bot}"
-TMP_DIR="${TMP_DIR:-./TMP}"
 
 SSH_OPTS=(--zone="${ZONE}" --quiet --ssh-flag=-o --ssh-flag=ServerAliveInterval=60)
 SCP_OPTS=(--zone="${ZONE}" --quiet)
@@ -45,7 +44,6 @@ die() { echo ""; echo "❌ $*"; exit 1; }
 remote() { gcloud compute ssh "${VM_NAME}" "${SSH_OPTS[@]}" --command="$1"; }
 scp_to() { gcloud compute scp "$1" "${VM_NAME}:$2" "${SCP_OPTS[@]}"; }
 scp_from() { gcloud compute scp "${VM_NAME}:$1" "$2" "${SCP_OPTS[@]}"; }
-scp_dir_from() { gcloud compute scp --recurse "${VM_NAME}:$1" "$2" "${SCP_OPTS[@]}"; }
 
 PY="python3"
 [ -x .venv/bin/python ] && PY=".venv/bin/python"
@@ -78,26 +76,33 @@ else
   bash scripts/preflight_deploy.sh || die "部署前測試沒過（修好再部署；急修才用 SKIP_PREFLIGHT=1）"
 fi
 
-# ── 3. 補齊本機 esun_sdk（whl／p12 在舊目錄；ini 只在舊 image 裡）──────
-mkdir -p esun_sdk "${TMP_DIR}"
-if ! ls esun_sdk/*.whl >/dev/null 2>&1; then
-  echo "📦 本機沒有 esun_sdk whl ⇒ 從 ${VM_NAME}:${OLD_DIR}/esun_sdk 取得..."
-  scp_dir_from "${OLD_DIR}/esun_sdk" "${TMP_DIR}/" \
-    || die "從 VM 取 esun_sdk 失敗（可手動放 whl 到 esun_sdk/ 後重試）"
-  cp -f "${TMP_DIR}"/esun_sdk/*.whl esun_sdk/ 2>/dev/null || true
-  cp -f "${TMP_DIR}"/esun_sdk/*.p12 esun_sdk/ 2>/dev/null || true
+# ── 3. 補齊本機 esun_sdk（whl 由 git 帶入；只補「不進版控」的兩樣）──────
+# 玉山 SDK 的 whl 已進版控（官方下載頁公開、免登入）⇒ clone/pull 就有。
+# 不進版控的是：
+#   ① p12 憑證（VM 舊目錄有）
+#   ② config.simulation.ini（券商帳號／API key；只在舊 image 的 /app/esun_sdk/ 裡）
+mkdir -p esun_sdk
+ls esun_sdk/*.whl >/dev/null 2>&1 \
+  || die "esun_sdk/ 沒有 whl（應由 git 帶入）⇒ 先 git pull，或手動放 whl 到 esun_sdk/ 後重試"
+
+if ! ls esun_sdk/*.p12 >/dev/null 2>&1; then
+  echo "📦 本機沒有 p12 憑證 ⇒ 從 ${VM_NAME}:${OLD_DIR}/esun_sdk 取..."
+  P12_REMOTE=$(remote "ls ${OLD_DIR}/esun_sdk/*.p12 2>/dev/null | head -1" | tr -d '\r' | tail -1)
+  [ -n "${P12_REMOTE}" ] \
+    || die "VM 的 ${OLD_DIR}/esun_sdk/ 沒有 p12：請手動放到 esun_sdk/（憑證向玉山取得）"
+  scp_from "${P12_REMOTE}" "esun_sdk/$(basename "${P12_REMOTE}")" \
+    || die "下載 p12 失敗"
 fi
+
 if [ ! -f esun_sdk/config.simulation.ini ]; then
-  # 券商帳號／API key 只在舊 image 的 /app/esun_sdk/config.simulation.ini（VM 主機目錄沒有）
   echo "📦 本機缺 esun_sdk/config.simulation.ini ⇒ 從舊 image 取出（登入必需）..."
   remote "sudo docker cp ${OLD_CONTAINER}:/app/esun_sdk/config.simulation.ini /tmp/config.simulation.ini" \
     || die "取不到 config.simulation.ini：請手動放到 esun_sdk/config.simulation.ini（內容同舊 image）"
   scp_from "/tmp/config.simulation.ini" "esun_sdk/config.simulation.ini" \
     || die "下載 config.simulation.ini 失敗"
-  remote "rm -f /tmp/config.simulation.ini"
+  remote "sudo rm -f /tmp/config.simulation.ini"
 fi
-ls esun_sdk/*.whl >/dev/null 2>&1 || die "esun_sdk 內仍無 whl ⇒ 無法建置含玉山 SDK 的 image"
-echo "   ✅ esun_sdk：$(ls esun_sdk/*.whl | wc -l) whl／$(ls esun_sdk/*.p12 2>/dev/null | wc -l) p12／ini=$([ -f esun_sdk/config.simulation.ini ] && echo yes || echo no)"
+echo "   ✅ esun_sdk：$(ls esun_sdk/*.whl | wc -l) whl（git）／$(ls esun_sdk/*.p12 2>/dev/null | wc -l) p12／ini=$([ -f esun_sdk/config.simulation.ini ] && echo yes || echo no)"
 
 # ── 4. 建 image ─────────────────────────────────────────────────────
 echo "🐳 建置 image ${IMAGE}..."
