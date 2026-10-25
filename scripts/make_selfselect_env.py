@@ -99,6 +99,26 @@ def value_of(line: str) -> str:
     return raw.split("#", 1)[0].strip()
 
 
+def default_value_line(line: str) -> str:
+    """把範本預設行的**行內註解**搬到上一行，值保持乾淨。
+
+    為什麼：docker compose 的 `env_file` 對「值為空＋行內註解」的寫法
+    （`LINE_NOTIFY_TOKEN=   # 說明`）會把整段註解當成值 ⇒ 實測容器內變成
+    `# LINE Notify（…）`，bot 每次啟動都去連 LINE（VM 無 DNS ⇒ 噴錯＋多等 5 秒）。
+    """
+    s = line.strip()
+    if '=' not in s:
+        return line
+    key, val = s.split('=', 1)
+    if '#' in val:
+        value, comment = val.split('#', 1)
+        value, comment = value.strip(), comment.strip()
+    else:
+        value, comment = val.strip(), ''
+    out = f'{key}={value}'
+    return f'# {comment}\n{out}' if comment else out
+
+
 def template_keys(example: Path):
     """依範本順序回傳 [(key, 範本原文行)]；只取「KEY=」行。"""
     out, seen = [], set()
@@ -134,18 +154,20 @@ def build(source_pairs, example_lines, keep_portfolio):
         if key.startswith("PC_") or key in emitted:
             continue
         if key in source_pairs:
-            put(key, source_pairs[key], copied)
+            # 來源行原樣帶過去；唯一例外：值為空又有行內註解（env_file 會把註解吃成值）
+            src_line = source_pairs[key]
+            put(key, default_value_line(src_line) if (not value_of(src_line) and '#' in src_line) else src_line, copied)
         elif key == "KEYRING_CRYPTFILE_PASSWORD":
             put(key,
-                "KEYRING_CRYPTFILE_PASSWORD=" + secrets.token_hex(16) +
-                "   # 自動產生（金鑰庫解鎖密碼，只在容器內用；換掉它容器重啟後重設即可）",
+                "# 自動產生（金鑰庫解鎖密碼，只在容器內用；換掉它容器重啟後重設即可）\n"
+                "KEYRING_CRYPTFILE_PASSWORD=" + secrets.token_hex(16),
                 defaulted)
         elif key in ESUN_OPTIONAL:
             put(key,
                 f"# {tpl_line.strip()}   # 注釋掉＝沿用 esun_sdk/config.simulation.ini（與舊 bot 同口徑）",
                 commented)
         else:
-            put(key, tpl_line, defaulted)
+            put(key, default_value_line(tpl_line), defaulted)
 
     # 2) 程式實際會讀、範本沒列的鍵
     for key, default in LIVE_EXTRA:
