@@ -481,8 +481,8 @@ def main():
     # 輸出 PC_ 設定（貼進 .env）
     chosen = args.strategy
     # 舊碼固定 `100/N`（5 檔＝每檔 20%、合計 100%）⇒ 再加上其他部位就爆表。
-    # 改成用「自選股腿額度 ÷ N」，來源：SELFSELECT_LEG_PCT（預設 30%）。
-    _leg_pct = float(os.getenv("SELFSELECT_LEG_PCT", "30") or 30)
+    # 改成用「腿額度 ÷ N」，來源：SELFSELECT_LEG_PCT（本專案只有一條腿 ⇒ 預設 100%）。
+    _leg_pct = float(os.getenv("SELFSELECT_LEG_PCT", "100") or 100)
     alloc = round(_leg_pct / max(1, len(selected)), 2)
     print(f"\n📝 可貼進 .env 的 PC_ 設定（strategy={chosen}, 每檔 alloc={alloc}%"
           f"｜腿額度 {_leg_pct:g}% ÷ {len(selected)}）：")

@@ -107,11 +107,27 @@ def _pc_line(sym: str, cfg: dict) -> str:
     return f"PC_{sym}={body}"
 
 
+def _is_clean_start(env_path=".env") -> bool:
+    """全新安裝判定：`.env` 裡**一條 `PC_` 都沒有**（沒有任何監控/持股）⇒ 空 holdings 是合法狀態。
+
+    為什麼需要：`logs/holdings.json` 沒有持倉時，程式原本一律中止 —— 那是為了擋「本機那份
+    holdings 已經過期，會把持有中的股票當成沒持有」。但全新安裝（第一次跑、還沒建倉）
+    兩邊都是空的，中止只會讓人卡住。只要 `.env` 也沒有 PC_ 條目，就沒有「被誤賣」的風險。
+    """
+    try:
+        text = Path(env_path).read_text(encoding="utf-8")
+    except Exception:
+        return False
+    return not any(line.strip().startswith("PC_") for line in text.splitlines())
+
+
 def resolve_leg_alloc(cur_leg=0.0, top_n=5, args_leg_pct=None, args_per_name=None,
                       env_leg_pct=None):
     """決定「每檔 alloc」→ `(per_name, leg_pct, 來源說明)`。
 
-    優先序：`--per-name-alloc` ＞ `--leg-pct` ＞ `.env` 現有腿額度 ＞ `SELFSELECT_LEG_PCT`（預設 30）÷ N。
+    優先序：`--per-name-alloc` ＞ `--leg-pct` ＞ `.env` 現有腿額度 ＞ `SELFSELECT_LEG_PCT`（預設 100）÷ N。
+
+    本專案只有一條腿，所以預設把全部資金分給 N 檔（100 ÷ N）；想留現金就調低 `SELFSELECT_LEG_PCT`。
 
     ⚠️ 2026-10-17（「從零重來」後修）：`.env` 的 `PC_*` 被清空時 `cur_leg` 會是 0。
     舊碼直接 `0 ÷ N = 0%`（等於不分配）；而 `monthly_rebalance_picker.py` 那邊更糟，
@@ -126,8 +142,8 @@ def resolve_leg_alloc(cur_leg=0.0, top_n=5, args_leg_pct=None, args_per_name=Non
     if cur_leg and float(cur_leg) > 0:
         return round(float(cur_leg) / n, 2), float(cur_leg), ".env 現有自選股腿額度"
     pct = float(env_leg_pct if env_leg_pct is not None
-                else os.getenv("SELFSELECT_LEG_PCT", "30") or 30)
-    return round(pct / n, 2), pct, f"SELFSELECT_LEG_PCT={pct:g}%（預設 30%）"
+                else os.getenv("SELFSELECT_LEG_PCT", "100") or 100)
+    return round(pct / n, 2), pct, f"SELFSELECT_LEG_PCT={pct:g}%（預設 100%）"
 
 
 def plan_env_changes(env_text: str, held: dict, selected: list, per_name_alloc: float,
@@ -411,14 +427,14 @@ def push_env_to_vm(env_path, vm: str = "tw-autotrader", zone: str = "asia-east1-
     """scp `.env` 到 VM，再比對遠端 md5 → `(ok, msg, local_md5, remote_md5)`（只上傳，不部署程式）。"""
     runner = runner or subprocess.run
     local = env_md5(env_path)
-    r = runner(["gcloud", "compute", "scp", str(env_path), f"{vm}:~/tw-selfselect/{env_path}",
+    r = runner(["gcloud", "compute", "scp", str(env_path), f"{vm}:~/{env_path}",
                 "--zone", zone, "--quiet"], capture_output=True, text=True)
     if r.returncode != 0:
         return False, f"scp 失敗：{(r.stderr or '')[:300]}", local, None
     remote = None
     try:
         r2 = runner(["gcloud", "compute", "ssh", vm, "--zone", zone, "--quiet", "--command",
-                     f"md5sum ~/tw-selfselect/{env_path}"], capture_output=True, text=True)
+                     f"md5sum ~/{env_path}"], capture_output=True, text=True)
         if r2.returncode == 0 and (r2.stdout or "").strip():
             remote = r2.stdout.split()[0]
     except Exception:
@@ -435,7 +451,7 @@ def main():
                    help="本腿資金上限 %%（預設＝沿用現有 .env 的腿額度）；每檔 alloc＝leg_pct ÷ top_n")
     p.add_argument("--per-name-alloc", type=float, default=None, help="直接指定每檔 alloc%%（覆寫 --leg-pct）")
     p.add_argument("--env", default=".env")
-    p.add_argument("--sync-holdings-from-vm", action="store_true", default=True,
+    p.add_argument("--sync-holdings-from-vm", action="store_true", default=None,
                    help="先從 VM 抓回實盤 logs/holdings.json（預設開）")
     p.add_argument("--no-sync", dest="sync_holdings_from_vm", action="store_false")
     p.add_argument("--reuse-pick", action="store_true",
@@ -457,9 +473,16 @@ def main():
                    help="盤中也補價（危險：會把未定案的當日 K 寫進快取；只在你很清楚後果時用）")
     p.add_argument("--apply", action="store_true", help="真的寫入 .env（預設只預覽；會先備份）")
     p.add_argument("--sync-env-to-vm", action="store_true", help="寫入後把 .env scp 到 VM（不部署程式）")
-    p.add_argument("--vm", default="tw-autotrader")
-    p.add_argument("--zone", default="asia-east1-b")
+    p.add_argument("--vm", default=os.getenv("SYNC_VM_NAME"), help="VM 名稱（預設讀 .env 的 SYNC_VM_NAME）")
+    p.add_argument("--zone", default=os.getenv("SYNC_VM_ZONE", "asia-east1-b"))
     args = p.parse_args()
+    # 預設值：有設定 SYNC_VM_NAME（或 --vm）就預設「先從 VM 抓回實盤持股」（安全優先，避免用舊資料判孤兒）；
+    # 沒設定就跳過（本機使用者 / 單機部署的情境），並在下面印提醒。
+    if args.sync_holdings_from_vm is None:
+        args.sync_holdings_from_vm = bool(args.vm)
+    if args.sync_holdings_from_vm and not args.vm:
+        print("⚠️ 未設定 SYNC_VM_NAME（VM 名稱）⇒ 跳過『從 VM 抓回實盤持股』，改用本機 logs/holdings.json")
+        args.sync_holdings_from_vm = False
 
     exclude = parse_exclude(args.exclude)
     if args.sync_only and (args.apply or args.realloc or args.exclude or args.reuse_pick):
@@ -486,8 +509,9 @@ def main():
         if not held:
             # 2026-10-17：從零重來後「空倉」是合法狀態；只要持股是剛從 VM 抓回來的就放行，
             #   但一律提醒對帳（避免帳實不符時把持股當不存在）。
-            if not getattr(args, "sync_holdings_from_vm", False):
-                sys.exit("❌ logs/holdings.json 沒有持倉 → 中止（請用 --sync-holdings-from-vm 更新）")
+            if not getattr(args, "sync_holdings_from_vm", False) and not _is_clean_start(args.env):
+                sys.exit("❌ logs/holdings.json 沒有持倉 → 中止（請用 --sync-holdings-from-vm 更新；"
+                         "全新安裝且 .env 也沒有任何 PC_ 條目時會自動放行）")
             print("⚠️ logs/holdings.json 沒有持倉（空倉，來源＝VM 實盤）"
                   "—— 若帳戶其實有持股請先跑 scripts/reconcile_broker_books.py")
         problems = validate_env_for_push(env_text, held)
@@ -503,7 +527,7 @@ def main():
         print(f"✅ 已上傳 {env_path} → VM（本機 md5 {local[:12]}…）")
         if remote is None:
             print("⚠️  無法回讀 VM 的 md5（SSH 失敗）⇒ 請自行確認："
-                  f"gcloud compute ssh {args.vm} --zone={args.zone} --command='md5sum ~/tw-selfselect/{env_path}'")
+                  f"gcloud compute ssh {args.vm} --zone={args.zone} --command='md5sum ~/{env_path}'")
         elif remote == local:
             print(f"✅ VM 端 md5 一致（{remote[:12]}…）⇒ 內容確認相同")
         else:
@@ -546,7 +570,7 @@ def main():
     selected = [s for s in selected_all if s not in exclude]
     held = _load_held()
     if not held:
-        if not getattr(args, "sync_holdings_from_vm", False):
+        if not getattr(args, "sync_holdings_from_vm", False) and not _is_clean_start(args.env):
             sys.exit("❌ logs/holdings.json 沒有持倉 → 中止（請確認是否為實盤最新；本機流程請用 "
                      "--sync-holdings-from-vm）")
         print("⚠️ 實盤沒有持倉（空倉）⇒ 本次所有選中標的都視為新買；"

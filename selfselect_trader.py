@@ -256,6 +256,11 @@ def main():
   from core.market_filter import MarketTrendFilter
   market_filter = MarketTrendFilter()
   pyramid_tracker = {}
+  # ⚠️ 必須宣告 global：下一行的賦值若沒有 global，Python 會把整個 main() 內的 USE_REAL_API
+  #   當成**區域變數** ⇒ BROKER 不是 esun 時那行不會執行，之後讀取就 UnboundLocalError
+  #   （2026-10-25 冒煙測試實測：BROKER=kgi 啟動即崩；原 tw-autotrader 亦有此洞，
+  #    只因 .env 一直寫 esun 才沒踩到）。見 test/test_module_global_binding.py。
+  global USE_REAL_API
   if (BROKER == 'esun'):
     USE_REAL_API = True
   broker = _create_broker()

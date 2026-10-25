@@ -410,11 +410,15 @@ class ResolveLegAllocTest(unittest.TestCase):
         self.assertEqual((per, leg), (6.0, 30.0))
         self.assertIn('.env', src)
 
-    def test_empty_env_falls_back_to_default_30pct(self):
-        """從零重來後 cur_leg=0 ⇒ 用 SELFSELECT_LEG_PCT（預設 30）而不是 0%／100%。"""
+    def test_empty_env_falls_back_to_default_100pct(self):
+        """從零重來後 cur_leg=0 ⇒ 用 SELFSELECT_LEG_PCT（本專案單腿 ⇒ 預設 100%）。
+
+        （多腿時代預設是 30%：自選股腿只分到三條腿的三成。拆成單腿專案後改為 100%，
+          想留現金的人自己把 SELFSELECT_LEG_PCT 調低。）
+        """
         per, leg, src = self.f(cur_leg=0, top_n=5)
-        self.assertEqual(per, 6.0, '預設 30% ÷ 5 = 6%（與重置前的生產設定一致）')
-        self.assertEqual(leg, 30.0)
+        self.assertEqual(per, 20.0, '預設 100% ÷ 5 = 20%')
+        self.assertEqual(leg, 100.0)
         self.assertIn('SELFSELECT_LEG_PCT', src)
 
     def test_env_override(self):

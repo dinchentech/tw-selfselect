@@ -3,10 +3,10 @@
 
 **症狀**（2026-10-23 實測）：在本機 shell 直接跑
 `python scripts/stock_selector_grid.py --recommend`，候選池是「市值前 **50**」而不是
-`.env` 的 `ROTATE_STOCK_NO=100` ⇒ 本機手動選股會選出與 VM **不同的 3 檔**。
+`.env` 的 `STOCK_NO=100` ⇒ 本機手動選股會用 50 檔候選池（與容器內的結果不同）。
 （重現 2026-10-17 B 腿選股時踩到：50 檔池完全看不到當天第 1／4／5 名的 6213／1303／2492。）
 
-**根因**：`STOCK_NO`（L49）／`ROTATE_MODE`（L50）／`MIN_DAILY_AMOUNT`（L51）／
+**根因**：`STOCK_NO`／`MIN_DAILY_AMOUNT`／`LOOKBACK_DAYS` 在模組層就 `os.getenv`，而
 `LOOKBACK_DAYS`（L120）在 **import 當下** 就 `os.getenv`，而 `load_dotenv(override=True)`
 寫在 L142 ⇒ 這幾個常數永遠拿不到 `.env` 的值（除非 shell 自己 export 過）。
 
@@ -28,9 +28,9 @@ DOTENV_CALL = "load_dotenv(override=True)"
 ENV_READ_TOKENS = ("os.getenv(", "os.environ.get(", "os.environ[")
 # 被測的模組層常數（`.env` 有設、且容器內靠 env_file 讀得到）
 WATCHED = {
-    "ROTATE_STOCK_NO": ("STOCK_NO", int),
-    "ROTATE_MODE": ("ROTATE_MODE", int),
+    "STOCK_NO": ("STOCK_NO", int),
     "MIN_DAILY_AMOUNT": ("MIN_DAILY_AMOUNT", float),
+    "SELECTOR_LOOKBACK_DAYS": ("LOOKBACK_DAYS", int),
 }
 
 
