@@ -21,7 +21,10 @@ _ROOT = Path(__file__).resolve().parent.parent
 
 
 def _reload_timeout():
-    import data.esun_provider as P
+    try:
+        import data.esun_provider as P
+    except ModuleNotFoundError:      # 玉山 SDK 非公開套件 ⇒ 沒有它就略過這兩支測試（CI）
+        raise unittest.SkipTest("需要玉山 SDK（esun_marketdata / esun_trade）")
     return importlib.reload(P).PLACE_ORDER_TIMEOUT
 
 

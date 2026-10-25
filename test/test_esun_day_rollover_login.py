@@ -26,8 +26,11 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import data.esun_provider as ep  # noqa: E402
-from data.esun_provider import EsunProvider  # noqa: E402
+try:
+    import data.esun_provider as ep  # noqa: E402
+    from data.esun_provider import EsunProvider  # noqa: E402
+except ModuleNotFoundError:      # 玉山 SDK 並非公開套件 ⇒ 沒有它就整支跳過（CI 環境）
+    raise unittest.SkipTest("需要玉山 SDK（esun_marketdata / esun_trade）")
 
 DAY1 = datetime(2026, 9, 10, 18, 20, 39)   # 前一天傍晚（實際事故的啟動時間）
 DAY1_LATE = datetime(2026, 9, 10, 23, 30, 0)

@@ -18,7 +18,10 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from data.esun_provider import EsunProvider  # noqa: E402
+try:
+    from data.esun_provider import EsunProvider  # noqa: E402
+except ModuleNotFoundError:      # 玉山 SDK 並非公開套件 ⇒ 沒有它就整支跳過（CI 環境）
+    raise unittest.SkipTest("需要玉山 SDK（esun_marketdata / esun_trade）")
 
 
 class _FakeTradeSDK:

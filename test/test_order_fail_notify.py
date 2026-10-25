@@ -98,7 +98,10 @@ class TestResolveFill(unittest.TestCase):
         self.assertIsNone(resolve_fill(broker, "2330", "buy", {}, 100))
 
     def test_esun_check_fill_parses_transactions(self):
-        from data.esun_provider import EsunProvider
+        try:
+            from data.esun_provider import EsunProvider
+        except ModuleNotFoundError:
+            self.skipTest("需要玉山 SDK（esun_marketdata / esun_trade）")
         p = EsunProvider.__new__(EsunProvider)
         p._trade_sdk = MagicMock()
         tx = {"stock_no": "2330", "match_quantity": 50}
@@ -106,7 +109,10 @@ class TestResolveFill(unittest.TestCase):
         self.assertEqual(p.check_fill("2330", "buy", {}, 100), 50)
 
     def test_esun_check_fill_unknown_format_safe(self):
-        from data.esun_provider import EsunProvider
+        try:
+            from data.esun_provider import EsunProvider
+        except ModuleNotFoundError:
+            self.skipTest("需要玉山 SDK（esun_marketdata / esun_trade）")
         p = EsunProvider.__new__(EsunProvider)
         p._trade_sdk = MagicMock()
         p._trade_sdk.get_transactions_by_date.return_value = [{"foo": 1}]
