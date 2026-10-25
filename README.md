@@ -1,8 +1,7 @@
 # TW SelfSelect Trader — 台股「自選股」量化自動交易系統
 
 > 每月自動選股、自動換股、自動下單的台股交易機器人。
-> 由 [tw-autotrader](https://github.com/dinchentech/tw-autotrader) 拆出，**只保留自選股（每月換股）這一條腿**
-> ——全輪替（每季動能換股）與法人動能兩條腿已移除。
+> 由 [tw-autotrader](https://github.com/dinchentech/tw-autotrader) 拆出，**只有一條資金腿：每月換股的自選股**。
 
 📖 **[使用手冊](使用手冊.md)** — 安裝、參數、每月作業、真錢上線檢查清單
 

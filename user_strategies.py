@@ -1,17 +1,17 @@
 # user_strategies.py - 用戶自定義策略檔案
 """
-此檔案供使用者定義 Group 1 和 Group 2 的備用策略。
-使用者可自由修改此檔案，無需更動 live_trader_multi.py。
+此檔案提供 4 組用戶自訂策略範本（g1_strategy_1／g1_strategy_2／g2_strategy_1／g2_strategy_2）。
+使用者可自由修改此檔案，無需更動主程式。
 
 使用方式：
-1. 修改下方的策略函式
-2. 在 .env 中設定 G1_STRATEGY_1、G1_STRATEGY_2、G2_STRATEGY_1、G2_STRATEGY_2
-3. 在 PORTFOLIO 設定中使用 g1_strategy_1、g1_strategy_2、g2_strategy_1、g2_strategy_2
+1. 修改下方的策略函式，或新增自己的函式
+2. 把函式掛進檔尾的 USER_STRATEGY_MAP（左邊＝策略名、右邊＝函式）
+3. 在 .env 的 PC_<代號> 條目把 strategy 填成該策略名，參數寫在同一個 JSON
+   （參數還要列進 core/config_loader.py 的 STRATEGY_PARAM_KEYS，否則不會傳給函式）
 
 例如：
-PORTFOLIO=0050:g1_strategy_1,2330:g1_strategy_2
-G1_STRATEGY_1=price_band
-G1_STRATEGY_2=weekly_kd_golden_cross
+PC_2504={"strategy":"g1_strategy_1","alloc":10,"buy_price":250,"sell_price":280}
+PC_2330={"strategy":"g1_strategy_2","alloc":10,"k_threshold":20}
 """
 
 import pandas as pd
@@ -241,8 +241,8 @@ def my_custom_volume_price(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
 # ==========================================
 # 用戶策略映射表（請勿修改此行以下）
 # ==========================================
-# 此映射表讓 live_trader_multi.py 知道如何載入你的自訂策略
-# 左邊是你在 .env 中使用的名稱，右邊是上方定義的函式名稱
+# 此映射表讓主程式（selfselect_trader.py）知道如何載入你的自訂策略
+# 左邊＝PC_<代號> 的 strategy 名稱，右邊＝上方定義的函式
 USER_STRATEGY_MAP = {
     # Group 1 備用策略
     'g1_strategy_1': price_band,
@@ -253,8 +253,7 @@ USER_STRATEGY_MAP = {
     'g2_strategy_2': my_custom_volume_price,
 }
 
-# 若要自訂名稱映射，可在 .env 中設定：
-# G1_STRATEGY_1=price_band
-# G1_STRATEGY_2=weekly_kd_golden_cross
-# G2_STRATEGY_1=my_custom_momentum
-# G2_STRATEGY_2=my_custom_volume_price
+# 若要新增策略：寫一支函式（回傳含 signal 欄位的 DataFrame），加進上面的 USER_STRATEGY_MAP，
+# 再把策略參數列進 core/config_loader.py 的 STRATEGY_PARAM_KEYS；
+# 之後在 .env 用 PC_<代號>={"strategy":"你的名字", ...參數} 指定即可。
+# G1_STRATEGY_1／G2_STRATEGY_1 這類舊專案的 .env 鍵在本專案沒有作用。

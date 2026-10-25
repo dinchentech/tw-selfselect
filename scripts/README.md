@@ -58,3 +58,4 @@ START=2015-01-01 END=2025-12-31 \
 | `generate_dashboard.py` | 產生 `logs/dashboard.html`（主程式 13:45 自動呼叫）|
 | `reset_paper_trading.py` | 清空模擬帳狀態（**真錢上線前務必確認**要不要清）|
 | `preflight_deploy.sh` | 部署前檢查（測試 ＋ 靜態檢查）|
+| `make_selfselect_env.py` | 由 tw-autotrader 的 `.env` 產生 tw-selfselect 的 `.env`（一次性遷移；`deploy_source.sh` 第一次部署會自動呼叫）|

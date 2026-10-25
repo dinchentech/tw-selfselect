@@ -1,0 +1,35 @@
+# Docker build context 排除清單（tw-selfselect）
+# 目的：image 只放「程式 + esun_sdk whl／憑證設定」；其餘（快取、帳本、機密）一律靠
+#       compose 的 bind mount 提供，避免把本機 logs/.env 烤進 image。
+
+# ── Git／CI ─────────────────────────────────────────────────────────
+.git/
+.gitattributes
+.github/
+
+# ── Python ──────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# ── 執行期資料／機密（compose bind mount 進來，不進 image）──────────
+.env
+.env.*
+!.env.example.txt
+capital.txt
+cache/
+logs/
+backups/
+results/
+TMP/
+*.pkl
+*.bak
+*.patch
+*:Zone.Identifier
+
+# ── 刻意「不」排除 esun_sdk/ ────────────────────────────────────────
+# Dockerfile 要 `pip install esun_sdk/*.whl`，而且執行期需要
+# esun_sdk/config.simulation.ini（券商帳號／API key）與 .p12 憑證。
+# 這與 tw-autotrader 既有 image 的行為一致；沒有這些檔案就無法登入下單。

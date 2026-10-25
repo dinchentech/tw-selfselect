@@ -24,6 +24,7 @@ cache/*
 results/*
 !results/.gitkeep
 tmp_gold/
+TMP/
 
 # ── Python ──────────────────────────────────────────────────────────
 __pycache__/
