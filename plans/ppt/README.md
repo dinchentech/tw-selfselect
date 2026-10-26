@@ -173,3 +173,24 @@ cd ~/tw-selfselect
 
 > 這六份是「依現有備忘稿反推」的結果，內容等同講稿、可直接配音；
 > 若要調整語氣或長度，改 `.md` 後跑 `generate_voiceover.sh` 重配即可。
+
+### 實際跑過的驗證（W1）
+
+```bash
+cd ~/tw-selfselect/plans
+./generate_narration.sh build "ppt/TW-SELFSELECT台股買賣自動化系統-W1-講稿版.pptx" \
+                              "ppt/TW-SELFSELECT台股買賣自動化系統-W1-解說腳本.md"
+./ppt_to_mp4.sh "ppt/TW-SELFSELECT台股買賣自動化系統-W1-配音版.pptx"
+```
+
+結果：17 頁、實測配音 **14 分 41 秒**（881 秒，比「建議時間」25 分 30 秒快，
+因為建議時間是講師含停頓的節奏）、每頁一支 mp3（13.3 MB）、配音版 14 MB、
+MP4 23 MB（1920×1080 H.264 + AAC，873 秒）。
+
+過程中修掉三個問題：
+
+| 問題 | 修法 |
+|---|---|
+| 輸入已是「-講稿版」時輸出變成 `…-講稿版-講稿版.pptx` | `generate_narration.sh`／`generate_voiceover.sh` 先剝掉結尾的 `-講稿版` 再組輸出檔名 |
+| 解說腳本的分隔線 `---` 被寫進備忘稿、也送進 TTS | 兩支腳本的第 1 步（講稿→pipeline 稿）與 `build_notes()` 都跳過 `---`／`***`／`___` |
+| 舊備忘稿殘留 `---` 已重寫 | 用快取的 `audio_44k/*.mp3` 重跑「備註＋嵌入音訊」步驟（不重新呼叫 TTS） |

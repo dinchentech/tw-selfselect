@@ -98,8 +98,10 @@ cmd_build() {
   local safe="$(sanitize "$name")"      # 安全目錄名
   local pipe_script="$dir/${safe}-narration-script.md"
   local out_dir="$dir/_narration_${safe}"
-  local notes_pptx="$base-講稿版.pptx"
-  local voice_pptx="$base-配音版.pptx"
+  # 輸入若已是「-講稿版」，輸出檔名不要再疊一層（…-講稿版-講稿版.pptx）
+  local out_base="${base%-講稿版}"
+  local notes_pptx="$out_base-講稿版.pptx"
+  local voice_pptx="$out_base-配音版.pptx"
 
   # 1. 講稿 → pipeline 專用稿（剝離講師提示/附錄/markdown 語法）
   info "1/4 轉換 pipeline 講稿 → ${pipe_script##*/}"
@@ -120,7 +122,7 @@ for num in range(1, max(slides) + 1):
     clean = []
     for para in slides[num].split('\n'):
         p = para.strip()
-        if not p or p.startswith('**講師提示**') or p.startswith('>'):
+        if not p or p in ('---','***','___') or p.startswith('**講師提示**') or p.startswith('>'):
             continue
         clean.append(p.replace('**', ''))
     lines.append(f"## slide-{num}")
@@ -177,7 +179,7 @@ def build_notes(title, body):
         if p.startswith('**講師提示**'):
             tip = p.replace('**講師提示**：', '').strip('* ')
             continue
-        if p.startswith('>'): continue
+        if p.startswith('>') or p in ('---','***','___'): continue
         lines.append(strip_cue(p))
     notes = ([time_label, ""] if time_label else []) + lines
     if tip: notes += ["", f"【講師提示】{tip}"]

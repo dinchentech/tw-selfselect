@@ -74,7 +74,7 @@ for num in range(1, max(slides) + 1):
     clean = []
     for para in slides[num].split('\n'):
         p = para.strip()
-        if not p or p.startswith('**講師提示**') or p.startswith('>'):
+        if not p or p in ('---','***','___') or p.startswith('**講師提示**') or p.startswith('>'):
             continue
         clean.append(p.replace('**', ''))
     lines.append(f"## slide-{num}")
@@ -98,8 +98,10 @@ print(f'{t[\"totalDuration\"]/60:.1f} 分鐘')
 if [ -n "$PPT" ]; then
   [ -f "$PPT" ] || die "簡報不存在: $PPT"
   PPT_BASE="${PPT%.pptx}"
-  NOTES_PPTX="$PPT_BASE-講稿版.pptx"
-  VOICE_PPTX="$PPT_BASE-配音版.pptx"
+  # 輸入若已是「-講稿版」，輸出檔名不要再疊一層
+  OUT_BASE="${PPT_BASE%-講稿版}"
+  NOTES_PPTX="$OUT_BASE-講稿版.pptx"
+  VOICE_PPTX="$OUT_BASE-配音版.pptx"
   info "3/3 更新講稿版 + 配音版 PPTX"
   "$PYTHON" - "$PPT" "$SCRIPT_MD" "$OUT_DIR" "$NOTES_PPTX" "$VOICE_PPTX" <<'PYEOF'
 import re, sys, hashlib, os
@@ -142,7 +144,7 @@ def build_notes(title, body):
         if p.startswith('**講師提示**'):
             tip = p.replace('**講師提示**：', '').strip('* ')
             continue
-        if p.startswith('>'): continue
+        if p.startswith('>') or p in ('---','***','___'): continue
         lines.append(strip_cue(p))
     notes = ([time_label, ""] if time_label else []) + lines
     if tip: notes += ["", f"【講師提示】{tip}"]
