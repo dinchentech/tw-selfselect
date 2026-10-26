@@ -32,7 +32,7 @@ W4/W6 以 LibreOffice 轉 PDF 抽頁目視確認版面正常（頁碼是自動�
 | `TW-SELFSELECT台股買賣自動化系統-W3-講稿版.pptx` | 24 |
 | `TW-SELFSELECT台股買賣自動化系統-W4-講稿版.pptx` | 27（原 39；新增 1 頁 auto 說明）|
 | `TW-SELFSELECT台股買賣自動化系統-W5-講稿版.pptx` | 26 |
-| `TW-SELFSELECT台股買賣自動化系統-W6-講稿版.pptx` | 21（原 21；新增 1 頁「賣出後會不會補選」）|
+| `TW-SELFSELECT台股買賣自動化系統-W6-講稿版.pptx` | 23（原 21；新增 3 頁：完整流程、生命週期、賣出後會不會補選）|
 
 ## DSH 化（2026-10-26）
 
