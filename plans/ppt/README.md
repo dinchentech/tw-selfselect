@@ -30,7 +30,7 @@ W4/W6 以 LibreOffice 轉 PDF 抽頁目視確認版面正常（頁碼是自動�
 | `TW-SELFSELECT台股買賣自動化系統-W1-講稿版.pptx` | 17 |
 | `TW-SELFSELECT台股買賣自動化系統-W2-講稿版.pptx` | 28 |
 | `TW-SELFSELECT台股買賣自動化系統-W3-講稿版.pptx` | 24 |
-| `TW-SELFSELECT台股買賣自動化系統-W4-講稿版.pptx` | 26（原 39）|
+| `TW-SELFSELECT台股買賣自動化系統-W4-講稿版.pptx` | 27（原 39；新增 1 頁 auto 說明）|
 | `TW-SELFSELECT台股買賣自動化系統-W5-講稿版.pptx` | 26 |
 | `TW-SELFSELECT台股買賣自動化系統-W6-講稿版.pptx` | 20（原 21）|
 
