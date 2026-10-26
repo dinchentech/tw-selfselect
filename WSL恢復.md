@@ -147,6 +147,48 @@ ls ~/tw-selfselect/esun_sdk/*.p12
 #   DSH 會自動以 mode 0600 存到 ~/.dsh/.credentials.yaml，無需手動建檔或設權限
 ```
 
+### 還原 `~/.ssh` 之後必做：修正金鑰權限
+
+從 Windows（`/mnt/c/...`）把 `~/.ssh` 複製回 WSL，權限會變成 `0644`／目錄 `0755`。
+OpenSSH 看到私鑰「同組或其他使用者可讀」就會**直接拒用**，看起來卻像「VM 沒掛公鑰」：
+
+```
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+@         WARNING: UNPROTECTED PRIVATE KEY FILE!          @
+@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+Permissions 0644 for '/home/frank/.ssh/google_compute_engine' are too open.
+This private key will be ignored.
+frank@35.194.221.238: Permission denied (publickey).
+ERROR: (gcloud.compute.ssh) [/usr/bin/ssh] exited with return code [255].
+```
+
+修法（一次全部修）：
+
+```bash
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/*      # 先把全部設 600，再把公鑰設回 644
+chmod 644 ~/.ssh/*.pub ~/.ssh/known_hosts ~/.ssh/google_compute_known_hosts
+```
+
+驗證（沒有警告就是好了）：
+
+```bash
+ssh-keygen -y -f ~/.ssh/google_compute_engine >/dev/null && echo "金鑰 OK"
+gcloud compute ssh tw-autotrader --zone=asia-east1-b --command='echo SSH_OK'
+```
+
+> ⚠️ 權限是 `0644` 的那段時間，**這台機器上任何本機帳號都能讀走你的私鑰**。
+> 如果這台機器不只你一個使用者（或曾同步到雲端），請換一輪金鑰。
+>
+> GCP：刪掉舊金鑰並重跑 `gcloud compute ssh`，它會重新產生金鑰並寫回 instance metadata：
+>
+> ```bash
+> rm -f ~/.ssh/google_compute_engine ~/.ssh/google_compute_engine.pub
+> gcloud compute ssh tw-autotrader --zone=asia-east1-b --command='echo new-key-ok'
+> ```
+>
+> GitHub：`ssh-keygen -t ed25519 -C "frank@wsl" -f ~/.ssh/id_ed25519`，再把新的 `.pub` 貼回 GitHub → Settings → SSH and GPG keys。
+
 接著設定自己：.bashrc 中的FinMind憑證, .env檔中的FinMind key/玉山密碼/TG key, esun_sdk中放上玉山.example,.p12檔
 如果使用者要用自己的git別忘了清除~/tw-selfselect下的.git目錄=> rm -rf .git
 再init你自己的.git目錄=>
