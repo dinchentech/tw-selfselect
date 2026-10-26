@@ -471,6 +471,8 @@ def main():
                    help="基準日落後仍要寫入 .env（風險自負；預設拒絕）")
     p.add_argument("--allow-intraday-refresh", action="store_true",
                    help="盤中也補價（危險：會把未定案的當日 K 寫進快取；只在你很清楚後果時用）")
+    p.add_argument("--ignore-drawback", action="store_true",
+                   help="忽略 MIN_DRAW_BACK 回撤保護（預設：回撤超標就本次續抱、不改 .env）")
     p.add_argument("--apply", action="store_true", help="真的寫入 .env（預設只預覽；會先備份）")
     p.add_argument("--sync-env-to-vm", action="store_true", help="寫入後把 .env scp 到 VM（不部署程式）")
     p.add_argument("--vm", default=os.getenv("SYNC_VM_NAME"), help="VM 名稱（預設讀 .env 的 SYNC_VM_NAME）")
@@ -558,11 +560,16 @@ def main():
             cmd += ["--sync-holdings-from-vm", "--vm", args.vm, "--zone", args.zone]
         if args.allow_stale_holdings:
             cmd.append("--allow-stale-holdings")
+        if args.ignore_drawback:
+            cmd.append("--ignore-drawback")
         print("▶", " ".join(cmd))
         r = subprocess.run(cmd, capture_output=True, text=True)
         print(r.stdout[-3000:] if r.stdout else "")
         if r.returncode != 0:
             print(r.stderr[-1500:] if r.stderr else "")
+            if r.returncode == 3:
+                print("🛡️ MIN_DRAW_BACK 觸發 ⇒ 本次續抱（維持現有名單、不改 .env、不重試）")
+                return
             sys.exit(f"❌ 選股失敗（returncode={r.returncode}）→ 中止，未改任何檔")
 
     pick = json.loads(PICK_FILE.read_text(encoding="utf-8"))

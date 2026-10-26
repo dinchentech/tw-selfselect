@@ -149,13 +149,14 @@ _INST_CACHE_GLOB = os.path.join(_ROOT,
 _inst_merged = None
 
 
-def load_twse_inst_merged(refresh_live: bool = False) -> dict:
+def load_twse_inst_merged(refresh_live: bool = False, as_of=None) -> dict:
     """合併全部全市場法人快取 → {date_str: {sid: (inst_buy, inst_sell)}}（投信+外資）。
 
     只合併「全市場」快取（單日 > 300 檔）；150 檔池子版（法人動能回測用）不混入，
     避免候選池外的股票被誤判為「無法人資料」。回傳 dict 以 module 層快取。
-    refresh_live=True 時（實盤選股），若合併快取落後於今天 > 3 個交易日，
-    以 TWSE T86 API 補抓缺失交易日並寫回快取。
+    refresh_live=True 時（實盤選股）：快取落後 > 3 個交易日就補抓缺失交易日；
+    **快取為空時會 bootstrap**（回補最近 `days` 個交易日）。補抓結果會寫回
+    `cache/inst_momentum/live/twse_inst_*.pkl`，下次不必重抓。
     """
     global _inst_merged
     if _inst_merged is not None:
@@ -189,34 +190,76 @@ def load_twse_inst_merged(refresh_live: bool = False) -> dict:
                 merged[d] = day
     print(f"📥 法人資料合併完成: {len(merged)} 交易日（全市場快取）")
     if refresh_live:
-        merged = _refresh_inst_live(merged)
+        merged = _refresh_inst_live(merged, as_of=as_of)
     _inst_merged = merged
     return merged
 
 
-def _refresh_inst_live(merged: dict) -> dict:
-    """實盤用：合併快取落後時，以 TWSE T86 補抓缺失交易日（只補交易日曆上的日期）。"""
-    from core.inst_data import fetch_twse_day
-    if not merged:
-        return merged
-    latest = max(pd.Timestamp(d) for d in merged)
-    if (pd.Timestamp.now() - latest).days <= 3:
-        return merged
-    biz = [d for d in pd.bdate_range(latest + pd.Timedelta(days=1), pd.Timestamp.now().normalize())
-           if d.weekday() < 5]
-    added = 0
-    for d in biz:
-        day = fetch_twse_day(d.strftime("%Y%m%d"))
+def _refresh_inst_live(merged: dict, as_of=None, days: int = 45) -> dict:
+    """實盤用：以 TWSE T86 補抓缺失交易日；**快取為空時 bootstrap**，並寫回快取。
+
+    2026-10-26 修正三個實務缺陷：
+      ① 原本 `if not merged: return merged` ⇒ 新環境（沒有任何 twse_inst 檔）永遠回
+         0 交易日，法人確認等於 pass-through。
+      ② 補抓只存在記憶體（docstring 說「寫回快取」但沒實作）⇒ 每次執行都重抓。
+      ③ 單日抓取無重試/退避 ⇒ 一遇 TWSE 反爬就整批失敗。
+    """
+    import time as _time
+    from core.inst_data import TwseBlockedError, fetch_twse_day
+
+    end = pd.Timestamp(as_of) if as_of is not None else pd.Timestamp.now()
+    end = end.normalize()
+    if merged:
+        latest = max(pd.Timestamp(d) for d in merged)
+        if (end - latest).days <= 3:
+            return merged
+        start = latest + pd.Timedelta(days=1)
+    else:
+        start = end - pd.Timedelta(days=max(days * 2, 90))
+    biz = [d for d in pd.bdate_range(start.normalize(), end) if d.weekday() < 5]
+    todo = [d for d in biz if d.strftime("%Y-%m-%d") not in merged][-days:]
+
+    added = {}
+    for d in todo:
+        day = None
+        for attempt in range(3):
+            try:
+                day = fetch_twse_day(d.strftime("%Y%m%d"))
+                break
+            except TwseBlockedError:
+                _time.sleep(1.5 * (attempt + 1))
+            except Exception as _e:
+                print(f"⚠️ 法人資料 {d:%Y-%m-%d} 抓取失敗：{_e}")
+                break
         if not day:
             continue
-        merged[d.strftime("%Y-%m-%d")] = {
+        added[d.strftime("%Y-%m-%d")] = {
             sid: (v["外資"]["buy"] + v["投信"]["buy"], v["外資"]["sell"] + v["投信"]["sell"])
             for sid, v in day.items()
         }
-        added += 1
+
     if added:
-        print(f"📥 TWSE 法人資料即時補抓: +{added} 交易日（至 {biz[-1].strftime('%Y-%m-%d')}）")
+        merged.update(added)
+        print(f"📥 TWSE 法人資料補抓: +{len(added)} 交易日（{min(added)} ~ {max(added)}）")
+        _persist_inst_live(added)
+    elif not merged:
+        print("⚠️ 法人資料快取是空的且補抓失敗（TWSE 反爬／無交易日）⇒ 法人確認本次 pass-through")
     return merged
+
+
+def _persist_inst_live(added: dict) -> None:
+    """把補抓到的**全市場**法人資料寫回快取：`cache/inst_momentum/live/twse_inst_<起>_<迄>.pkl`。"""
+    if not added:
+        return
+    days = sorted(added)
+    if max(len(added[d]) for d in days) <= 300:
+        print("⚠️ 法人資料筆數不足（非全市場）⇒ 不寫快取")
+        return
+    out_dir = os.path.join(_ROOT, "cache", "inst_momentum", "live")
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"twse_inst_{days[0]}_{days[-1]}.pkl")
+    dump_cache(path, added, meta={"source": "TWSE_T86", "dates": len(added)})
+    print(f"💾 已寫入法人資料快取：{os.path.relpath(path, _ROOT)}")
 
 
 def inst_net_buy(inst_data: dict, sid: str, end_date, days: int = 21) -> float:

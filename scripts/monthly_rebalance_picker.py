@@ -346,6 +346,8 @@ def main():
     p.add_argument("--allow-stale-holdings", action="store_true",
                    help="跳過「本機 logs/holdings.json 是否可信」檢查（預設會中止；"
                         "只有在你確定這份 holdings 就是實盤最新狀態時才用）")
+    p.add_argument("--ignore-drawback", action="store_true",
+                   help="忽略 MIN_DRAW_BACK 回撤保護（預設：回撤超標就本次續抱、exit 3）")
     args = p.parse_args()
 
     global data
@@ -363,7 +365,7 @@ def main():
     # 法人確認
     inst = None
     if not args.no_inst:
-        inst = ssg.load_twse_inst_merged()
+        inst = ssg.load_twse_inst_merged(refresh_live=True, as_of=sel_date)
         from bisect import bisect_right
         dates = sorted(pd.Timestamp(d) for d in inst)
         idx = bisect_right(dates, sel_date)
@@ -417,7 +419,38 @@ def main():
         print("   ⚠️ --allow-stale-holdings：仍以本機這份 holdings 繼續（風險自負）")
 
     current = read_current_holdings()      # .env PC_ 監控/設定中
-    held = set(read_actual_holdings())     # logs/holdings.json 實際持倉(qty>0)
+    _held_qty = read_actual_holdings()     # logs/holdings.json 實際持倉(qty>0)
+    held = set(_held_qty)
+
+    # ── MIN_DRAW_BACK 帳戶回撤防護（2026-10-26 接線）────────────────────────
+    # 為什麼放在 picker：這裡是「bot 排程（subprocess）」與「手動選股」的共同入口，
+    #   呼叫端（monthly_selfselect_run）依 returncode=3 判定「本次續抱、不改 .env」。
+    #   舊版只有 core/drawdown_guard.py 的函式、全 repo 沒有呼叫端 ⇒ 實盤等於沒有這道保護。
+    if _held_qty:
+        try:
+            from core.drawdown_guard import mdb_guard
+            _pm = {}
+            for _s in _held_qty:
+                _df = data.get(_s)
+                if _df is not None and not getattr(_df, "empty", True):
+                    try:
+                        _pm[_s] = float(_df["close"].iloc[-1])
+                    except Exception:
+                        pass
+            _blocked, _dd = mdb_guard(_pm, holdings=_held_qty, fallback_loader=ssg.load_stock)
+            if _dd is not None:
+                print(f"🛡️ MIN_DRAW_BACK 回撤檢查：{_dd:+.1%}")
+            if _blocked:
+                if args.ignore_drawback:
+                    print("⚠️ --ignore-drawback：忽略回撤保護，照常換股（風險自負）")
+                else:
+                    print("⚠️ 總回撤超過 MIN_DRAW_BACK → 依規則本次續抱：中止選股、不改 .env")
+                    print("   （要強制換股：加 --ignore-drawback，或把 MIN_DRAW_BACK 設 0）")
+                    sys.exit(3)
+        except SystemExit:
+            raise
+        except Exception as _e:
+            print(f"⚠️ MIN_DRAW_BACK 檢查異常（{_e}），照常選股")
     # ── 總數上限 N（2026-09-22 使用者裁定）：本腿總檔數維持 N ──────────────
     # 只算「由選股管理」的持股（keep_wait 條目視為人工管理，不由選股程式汰換）。
     leg_held = sorted(s for s in held if current.get(s, {}).get("strategy") != "keep_wait")
