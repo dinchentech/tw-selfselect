@@ -33,3 +33,27 @@ W4/W6 以 LibreOffice 轉 PDF 抽頁目視確認版面正常（頁碼是自動�
 | `TW-SELFSELECT台股買賣自動化系統-W4-講稿版.pptx` | 26（原 39）|
 | `TW-SELFSELECT台股買賣自動化系統-W5-講稿版.pptx` | 26 |
 | `TW-SELFSELECT台股買賣自動化系統-W6-講稿版.pptx` | 20（原 21）|
+
+## DSH 化（2026-10-26）
+
+母檔用的是 opencode，本專案改用 **DSH（DeepSeek Harness）**，已把相關文字全部改寫：
+
+| 項目 | 舊 | 新 |
+|---|---|---|
+| 名稱 | Opencode / opencode | DSH（DeepSeek Harness） |
+| 啟動 | `opencode`（WSL）、`opencode_web` | `dsh_web`（＝`pnpm dsh web`）→ 瀏覽器開 http://127.0.0.1:3080 |
+| 續接對話 | `opencode -s <session>` | Web 介面左側 session 清單 |
+| 模型 | Deepseek V4 Flash／PRO（Ctrl+P 切換） | deepseek-flash（Web 介面可切換；同段對話不混他廠模型） |
+| 模式 | Sisyphus Ultraworker／Prometheus Plan Builder | 一般對話＋**plan 模式**（先送計畫核准）；長任務用 **goal** 分回合續跑 |
+| 技能 | `/finmind` 指令 | 自然語言呼叫（例：「用 finmind 抓台積電月營收」） |
+| 準備清單 | 申請 OpenRouter／Nvidia 帳號 | 使用 DSH＋deepseek-flash（金鑰事先設好） |
+
+### 截圖處理
+- W3 的 s2–s6、s19、s20：內嵌的 opencode 介面截圖**已移除**，原位置留淡色「（DSH 介面截圖待補）」提示框；補到 DSH 截圖後直接換上即可。
+- W5 的 s16、s17：截圖內容（計畫表／測試輸出）保留，只**裁掉底部狀態列**（原本寫著 Prometheus Plan Builder／Sisyphus Ultraworker）。
+- 其餘截圖（PyCharm、VS Code、圖表、儀表板）與 AI 品牌無關，維持原樣。
+
+### 仍待處理（母檔沿用、尚未改）
+- W2 的部署章節仍寫舊流程（`deploy_crypted.sh`／pyarmor／`tw-autotrader:latest`）；
+  本專案實際是 `./deploy_source.sh`＋`tw-selfselect:latest`。
+- GCP VM 名稱 `tw-autotrader` 保留（實機沒改名）；GitHub 連結也維持母專案網址。
