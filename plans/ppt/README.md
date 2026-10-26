@@ -18,6 +18,7 @@
 | 文字改寫 | W1 六大策略→五大策略；W2 掛載用途與 DEBUG 範例去 ROTATE_；W3 法人動能案例改為通用舊回測；W4 策略清單 6→5；W5 回測模式五（法人抬轎）移除；W6 策略備註、持股數目講稿去全輪替 |
 | W4「法人確認濾網」頁 | 表格改寫成 tw-selfselect 口徑（15 日法人淨買超、TWSE T86 自動補抓／pass-through、`--no-inst`／`--inst-days`），刪掉全輪替的回測數字列 |
 | 全域替換 | `live_trader_multi.py` → `selfselect_trader.py`；`ROTATE_MODE_VAL` → 通用變數示例 |
+| W1 第 7 頁「實際運行展示」 | 改用 VM 實機儀表板截圖（`plans/assets/dashboard_real_20261026.png`，已去識別＝只有代號／數字）＋右側白底說明卡；線上示範頁連結另註明「範例資料」 |
 
 驗證：轉換後六個檔以 python-pptx 重新開啟無誤，全文（含講稿備註、表格）掃描
 `全輪替｜法人動能｜法人抬轎｜ROTATE_｜live_trader_multi｜TW-AUTOTRADER` 皆 0 命中；
