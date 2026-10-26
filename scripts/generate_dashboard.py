@@ -15,7 +15,6 @@ import numpy as np
 
 CSV_PATH = Path("logs/performance.csv")
 OUT_PATH = Path("logs/dashboard.html")
-GROUP2_PNL_PATH = Path("data/inst_momentum_pnl.json")
 HOLDINGS_PATH = Path("logs/holdings.json")
 STOCK_ALLOC_PATH = Path("logs/stock_allocation.json")
 
@@ -77,6 +76,41 @@ def load_holdings() -> dict:
         return holdings
     except Exception:
         return {}
+
+
+def load_portfolio_strategies() -> dict:
+    """從 `.env` 的 `PC_<代號>` 讀 `strategy`（`auto` 會接上已鎖定的策略）。
+
+    例：`keep_wait`、`ma_cross`、`auto→bollinger`（`logs/auto_resolved.json` 有鎖定值時）。
+    讀不到 `.env` 或該檔不在名單 → 顯示 `-`（例如手動買進、不在 PC_ 名單的部位）。
+    """
+    env_path = Path(os.getenv("DOTENV_PATH", ".env"))
+    if not env_path.exists():
+        return {}
+    locked = {}
+    try:
+        lf = Path("logs/auto_resolved.json")
+        if lf.exists():
+            locked = json.loads(lf.read_text()) or {}
+    except Exception:
+        locked = {}
+    out = {}
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        t = line.strip()
+        if not t.startswith("PC_") or "=" not in t:
+            continue
+        sym, val = t[3:].split("=", 1)
+        sym = sym.strip()
+        val = val.split("#", 1)[0].strip()
+        try:
+            cfg = json.loads(val)
+        except Exception:
+            continue
+        st = str(cfg.get("strategy", "?")).strip() or "?"
+        if st == "auto" and sym in locked:
+            st = f"auto→{locked[sym]}"
+        out[sym] = st
+    return out
 
 
 def load_stock_allocation() -> dict:
@@ -433,37 +467,6 @@ def _to_native(obj):
     return obj
 
 
-def load_group2_json_summary() -> dict:
-    """從 inst_momentum_pnl.json 讀取 Group 2 摘要（資本、權益等）"""
-    if not GROUP2_PNL_PATH.exists():
-        return {}
-    try:
-        data = json.loads(GROUP2_PNL_PATH.read_text())
-        capital = data.get("capital", 0)
-        total_buy = data.get("total_buy_cost", 0)
-        total_sell = data.get("total_sell_proceeds", 0)
-        # 從 state 抓持倉市值（若可讀）
-        pos_value = 0
-        state_path = Path("data/inst_momentum_state.json")
-        if state_path.exists():
-            try:
-                state = json.loads(state_path.read_text())
-                pos_value = sum(p.get("cost", 0) for p in state.get("positions", {}).values())
-            except Exception:
-                pass
-        remaining = capital - total_buy + total_sell
-        return {
-            "capital": capital,
-            "remaining_cash": round(remaining, 0),
-            "position_value": round(pos_value, 0),
-            "total_equity": round(remaining + pos_value, 0),
-            "total_buy_cost": round(total_buy, 0),
-            "total_sell_proceeds": round(total_sell, 0),
-        }
-    except Exception:
-        return {}
-
-
 def build_group_stats(pnl_list: list, df: pd.DataFrame) -> dict:
     """計算單一群組的摘要統計"""
     if not pnl_list:
@@ -490,43 +493,29 @@ def build_group_stats(pnl_list: list, df: pd.DataFrame) -> dict:
 
 
 def build_html(trades_df: pd.DataFrame) -> str:
-    df_g1 = trades_df[trades_df["group"] == 1] if not trades_df.empty else pd.DataFrame()
-    df_g2 = trades_df[trades_df["group"] == 2] if not trades_df.empty else pd.DataFrame()
+    df_g1 = trades_df if not trades_df.empty else pd.DataFrame()
 
     pnl_g1 = compute_pnl(df_g1)
-    pnl_g2 = compute_pnl(df_g2)
 
     stats_g1 = build_group_stats(pnl_g1, df_g1)
-    stats_g2 = build_group_stats(pnl_g2, df_g2)
 
     symbol_stats_g1 = compute_symbol_stats(df_g1, pnl_g1)
-    symbol_stats_g2 = compute_symbol_stats(df_g2, pnl_g2)
 
     daily_g1 = compute_daily_pnl(pnl_g1)
-    daily_g2 = compute_daily_pnl(pnl_g2)
-
-    # Group 2 JSON PnL 補充資料
-    g2_json = load_group2_json_summary()
 
     # 合併曲線資料：以日期為 key
     all_dates = set()
     for d in daily_g1:
         all_dates.add(d["date"])
-    for d in daily_g2:
-        all_dates.add(d["date"])
     pnl_curve_g1 = {d["date"]: d["cumulative"] for d in daily_g1}
-    pnl_curve_g2 = {d["date"]: d["cumulative"] for d in daily_g2}
     combined_daily = sorted(all_dates)
     curve_g1_data = [pnl_curve_g1.get(d, None) for d in combined_daily]
-    curve_g2_data = [pnl_curve_g2.get(d, None) for d in combined_daily]
 
     updated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     # 「近 50 筆交易」＝完整逐筆紀錄（含買進）；統計仍走 pnl_list，不受影響
     trade_log_g1 = build_trade_log(df_g1, pnl_g1)
-    trade_log_g2 = build_trade_log(df_g2, pnl_g2)
     last_trades_g1 = sorted(trade_log_g1, key=lambda x: x["date"] + x["time"], reverse=True)[:50]
-    last_trades_g2 = sorted(trade_log_g2, key=lambda x: x["date"] + x["time"], reverse=True)[:50]
 
     # 計算未平倉部位
     holdings = load_holdings()
@@ -540,25 +529,23 @@ def build_html(trades_df: pd.DataFrame) -> str:
         price_date_note_html = ""
     positions = compute_positions(trades_df, holdings, stock_alloc,
                                   current_prices=current_prices)
+    strategies = load_portfolio_strategies()
+    for _pos in positions:
+        _pos["strategy"] = strategies.get(_pos["symbol"], "-")
 
     charts_data = _to_native({
         "labels": combined_daily,
         "curve_g1": curve_g1_data,
-        "curve_g2": curve_g2_data,
         "symbol_stats_g1": symbol_stats_g1,
-        "symbol_stats_g2": symbol_stats_g2,
         "pnl_list_g1": pnl_g1[-30:] if len(pnl_g1) > 30 else pnl_g1,
-        "pnl_list_g2": pnl_g2[-30:] if len(pnl_g2) > 30 else pnl_g2,
-        "g2_json": g2_json,
     })
     charts_json = json.dumps(charts_data, ensure_ascii=False)
 
     # 只要有任何交易紀錄就顯示該群組（僅有買進、尚未平倉時也要看得到，不可顯示「尚無交易紀錄」）
     has_g1 = stats_g1["total_trades"] > 0 or bool(trade_log_g1)
-    has_g2 = stats_g2["total_trades"] > 0 or bool(trade_log_g2)
 
-    total_pnl = stats_g1["total_pnl"] + stats_g2["total_pnl"]
-    total_trades = stats_g1["total_trades"] + stats_g2["total_trades"]
+    total_pnl = stats_g1["total_pnl"]
+    total_trades = stats_g1["total_trades"]
 
     # ─── 數值格式化 helper ───
     def v(n):
@@ -587,7 +574,6 @@ def build_html(trades_df: pd.DataFrame) -> str:
   .group-label {{ font-size: .65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
                   margin-bottom: 8px; padding: 2px 8px; border-radius: 4px; display: inline-block; }}
   .group-label.g1 {{ background: #fdeaea; color: #c0392b; }}
-  .group-label.g2 {{ background: #eaf5ff; color: #2980b9; }}
   .group-label.total {{ background: #f0f0f0; color: #555; }}
   .charts {{ display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }}
   .chart-box {{ background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.06); }}
@@ -640,19 +626,6 @@ def build_html(trades_df: pd.DataFrame) -> str:
    </div>
 """
 
-    # Group 2 JSON 補充卡片（資本、權益）
-    if g2_json.get("capital", 0) > 0:
-        equity = g2_json.get("total_equity", 0)
-        capital = g2_json.get("capital", 0)
-        ret = ((equity - capital) / capital * 100) if capital > 0 else 0
-        html += f"""
-  <div class="cards">
-    <div class="card"><div class="label">Group 2 起始資金</div><div class="value">{int(capital):,}</div></div>
-    <div class="card"><div class="label">Group 2 總權益</div><div class="value {"positive" if equity >= capital else "negative"}">{int(equity):,}</div></div>
-    <div class="card"><div class="label">Group 2 報酬率</div><div class="value {"positive" if ret >= 0 else "negative"}">{ret:+.2f}%</div></div>
-  </div>
-"""
-
     # ⚠️ 帳務不一致警示（必須在「未平倉部位」之前，因為那份清單看不到這些部位）
     html += _books_warning()
 
@@ -662,11 +635,11 @@ def build_html(trades_df: pd.DataFrame) -> str:
   <div class="group-section">
     <div class="section-title">📋 未平倉部位</div>
     {('<div class="subtitle" style="margin:-6px 0 8px;">' + price_date_note_html + '</div>') if price_date_note_html else ''}
-    <table><thead><tr><th>標的</th><th>股數</th><th>平均成本</th><th>市價</th><th>市值</th><th>未實現損益</th><th>報酬率</th><th>最後買進日</th></tr></thead><tbody>
+    <table><thead><tr><th>標的</th><th>策略</th><th>股數</th><th>平均成本</th><th>市價</th><th>市值</th><th>未實現損益</th><th>報酬率</th><th>最後買進日</th></tr></thead><tbody>
 """
         for pos in positions:
             cls = "positive" if pos["unrealized_pnl"] >= 0 else "negative"
-            html += f"""      <tr><td>{pos["symbol"]}</td><td>{pos["shares"]}</td><td>{pos["avg_cost"]:,.0f}</td><td>{pos["current_price"]:,.0f}</td>
+            html += f"""      <tr><td>{pos["symbol"]}</td><td>{pos["strategy"]}</td><td>{pos["shares"]}</td><td>{pos["avg_cost"]:,.0f}</td><td>{pos["current_price"]:,.0f}</td>
           <td>{pos["current_value"]:,.0f}</td><td class="{cls}">{pos["unrealized_pnl"]:+,.0f}</td>
           <td class="{cls}">{pos["unrealized_pct"]:+.2f}%</td><td>{pos["last_buy_date"]}</td></tr>
 """
@@ -721,32 +694,6 @@ def build_html(trades_df: pd.DataFrame) -> str:
     <div class="group-label g1">自選股策略明細</div>
     <div class="empty">📭 尚無交易紀錄</div>
   </div>"""
-
-    # ─── Group 2 明細 ───
-    if has_g2:
-        html += f"""
-  <div class="group-section">
-    <div class="group-label g2">Group 2 法人抬轎動能策略</div>
-    <div class="cards">
-      <div class="card"><div class="label">已實現損益</div><div class="value {"positive" if stats_g2['total_pnl'] >= 0 else "negative"}">{v(stats_g2['total_pnl'])}</div></div>
-      <div class="card"><div class="label">交易次數</div><div class="value">{stats_g2['total_trades']}</div></div>
-      <div class="card"><div class="label">勝率</div><div class="value">{stats_g2['win_rate']}%</div></div>
-      <div class="card"><div class="label">交易天數</div><div class="value">{stats_g2['trade_days']}</div></div>
-    </div>
-    <div class="section-title">📋 近 50 筆交易</div>
-    <table><thead><tr><th>日期</th><th>時間</th><th>動作</th><th>標的</th><th>價格</th><th>股數</th><th>損益</th><th>報酬率</th><th>累積損益</th></tr></thead><tbody>"""
-        html += _render_trade_rows(last_trades_g2)
-        html += "</tbody></table>"
-
-        if symbol_stats_g2:
-            html += """
-    <div class="section-title">🏷️ 各標的統計</div>
-    <table><thead><tr><th>標的</th><th>交易次數</th><th>買進</th><th>賣出</th><th>損益</th><th>勝率</th></tr></thead><tbody>"""
-            for s in symbol_stats_g2:
-                cls = "positive" if s["pnl"] >= 0 else "negative"
-                html += f"""<tr><td>{s["symbol"]}</td><td>{s["trades"]}</td><td>{s["buys"]}</td><td>{s["sells"]}</td>
-                    <td class="{cls}">{s["pnl"]:+,.0f}</td><td>{s["win_rate"]}%</td></tr>"""
-            html += "</tbody></table>"
 
     # ─── 策略動畫連結（五策略）───
     STRATEGY_VIDEOS = [
@@ -819,10 +766,7 @@ def trade_count_summary(df) -> dict:
     """
     if df is None or getattr(df, 'empty', True):
         return {"realized": 0, "buys": 0, "rows": 0}
-    if 'group' in df.columns:
-        realized = len(compute_pnl(df[df['group'] == 1])) + len(compute_pnl(df[df['group'] == 2]))
-    else:
-        realized = len(compute_pnl(df))
+    realized = len(compute_pnl(df))
     buys = 0
     if 'action' in df.columns:
         buys = int((df['action'].astype(str).str.upper().str.strip() == 'BUY').sum())

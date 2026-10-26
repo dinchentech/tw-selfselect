@@ -18,11 +18,11 @@ import pandas as pd
 
 
 # ==========================================
-# Group 1 備用策略 1 (g1_strategy_1) — 價格區間策略
+# 策略範本 1（g1_strategy_1）— 價格區間策略
 # ==========================================
 def price_band(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
     """
-    Group 1 備用策略 1 - 價格區間低接高賣策略
+    策略範本 1（g1_strategy_1）- 價格區間低接高賣策略
 
     當價格低於買入價時發出買進訊號，高於賣出價時發出賣出訊號。
     適用於基本面看好、設定固定價格區間來回操作的股票（如 十銓 250↓買/280↑賣）。
@@ -51,11 +51,11 @@ def price_band(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
 
 
 # ==========================================
-# Group 1 備用策略 2 (g1_strategy_2) — 週 KD 黃金交叉策略
+# 策略範本 2（g1_strategy_2）— 週 KD 黃金交叉策略
 # ==========================================
 def weekly_kd_golden_cross(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
     """
-    Group 1 備用策略 2 - 週 KD 黃金交叉策略
+    策略範本 2（g1_strategy_2）- 週 KD 黃金交叉策略
 
     將日線資料重新採樣為週線，計算週 KD(9,3,3)，在低檔黃金交叉時買進，
     死亡交叉時賣出。含「持倉狀態機」：空手才買、持倉才賣，使訊號 +1/-1
@@ -158,11 +158,11 @@ def weekly_kd_golden_cross(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
 
 
 # ==========================================
-# Group 2 備用策略 1 (g2_strategy_1)
+# 策略範本 3（g2_strategy_1）
 # ==========================================
 def my_custom_momentum(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
     """
-    Group 2 備用策略 1 - 自訂動能策略
+    策略範本 3（g2_strategy_1）- 自訂動能策略
 
     預設：價格動能策略 - 基於過去 N 日的漲跌幅判斷
 
@@ -192,11 +192,11 @@ def my_custom_momentum(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
 
 
 # ==========================================
-# Group 2 備用策略 2 (g2_strategy_2)
+# 策略範本 4（g2_strategy_2）
 # ==========================================
 def my_custom_volume_price(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
     """
-    Group 2 備用策略 2 - 自訂量價策略
+    策略範本 4（g2_strategy_2）- 自訂量價策略
 
     預設：量價配合策略 - 價格上漲 + 成交量放大 = 買進
 
@@ -244,11 +244,11 @@ def my_custom_volume_price(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
 # 此映射表讓主程式（selfselect_trader.py）知道如何載入你的自訂策略
 # 左邊＝PC_<代號> 的 strategy 名稱，右邊＝上方定義的函式
 USER_STRATEGY_MAP = {
-    # Group 1 備用策略
+    # 策略範本 1–2（g1_* 插槽）
     'g1_strategy_1': price_band,
     'g1_strategy_2': weekly_kd_golden_cross,
 
-    # Group 2 備用策略
+    # 策略範本 3–4（g2_* 插槽）
     'g2_strategy_1': my_custom_momentum,
     'g2_strategy_2': my_custom_volume_price,
 }

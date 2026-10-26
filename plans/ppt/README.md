@@ -22,6 +22,7 @@
 驗證：轉換後六個檔以 python-pptx 重新開啟無誤，全文（含講稿備註、表格）掃描
 `全輪替｜法人動能｜法人抬轎｜ROTATE_｜live_trader_multi｜TW-AUTOTRADER` 皆 0 命中；
 W4/W6 以 LibreOffice 轉 PDF 抽頁目視確認版面正常（頁碼是自動欄位，刪頁後會自己重編）。
+W4 另補「keep_wait 人工管理怎麼用」一頁，對應 `策略說明.md` §9.9。
 
 ## 檔案
 
@@ -30,7 +31,7 @@ W4/W6 以 LibreOffice 轉 PDF 抽頁目視確認版面正常（頁碼是自動�
 | `TW-SELFSELECT台股買賣自動化系統-W1-講稿版.pptx` | 17 |
 | `TW-SELFSELECT台股買賣自動化系統-W2-講稿版.pptx` | 28 |
 | `TW-SELFSELECT台股買賣自動化系統-W3-講稿版.pptx` | 24 |
-| `TW-SELFSELECT台股買賣自動化系統-W4-講稿版.pptx` | 27（原 39；新增 1 頁 auto 說明）|
+| `TW-SELFSELECT台股買賣自動化系統-W4-講稿版.pptx` | 28（原 39；新增 2 頁：auto 型態感知、keep_wait 人工管理）|
 | `TW-SELFSELECT台股買賣自動化系統-W5-講稿版.pptx` | 26 |
 | `TW-SELFSELECT台股買賣自動化系統-W6-講稿版.pptx` | 23（原 21；新增 3 頁：完整流程、生命週期、賣出後會不會補選）|
 
