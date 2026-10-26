@@ -570,7 +570,7 @@ def build_html(trades_df: pd.DataFrame) -> str:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TW AutoTrader — 績效儀表板</title>
+<title>TW SelfSelect — 績效儀表板</title>
 <script src="{CHART_CDN}"></script>
 <style>
   *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
@@ -621,7 +621,7 @@ def build_html(trades_df: pd.DataFrame) -> str:
 </head>
 <body>
 <div class="container">
-  <h1>📊 TW AutoTrader 績效儀表板 <span style="font-size:.9rem;color:#999;font-weight:400;">v{APP_VERSION}</span></h1>
+  <h1>📊 TW SelfSelect 績效儀表板 <span style="font-size:.9rem;color:#999;font-weight:400;">v{APP_VERSION}</span></h1>
   <div class="subtitle">最後更新：{updated_at} · Group 1 + Group 2 雙群組</div>
 
   <!-- 總覽卡片 -->
@@ -756,14 +756,13 @@ def build_html(trades_df: pd.DataFrame) -> str:
     <div class="empty">📭 尚無交易紀錄</div>
   </div>"""
 
-    # ─── 六策略動畫連結 ───
+    # ─── 策略動畫連結（五策略）───
     STRATEGY_VIDEOS = [
         ("布林通道反轉", "bollinger-animation.html"),
         ("VWAP 偏離反轉", "vwap-animation.html"),
         ("均線交叉", "ma_cross-animation.html"),
         ("唐奇安突破", "breakout-animation.html"),
         ("Keep & Wait 低接", "keep_wait策略說明.html"),
-        ("法人抬轎動能", "法人動能策略說明.html"),
     ]
     video_links = "".join(
         f'<a href="{fname}" target="_blank" rel="noopener" class="strategy-link">{name}</a>'
@@ -777,7 +776,7 @@ def build_html(trades_df: pd.DataFrame) -> str:
       {video_links}
     </div>
   </div>
-  <footer>TW AutoTrader · 資料不構成投資建議 · {updated_at}</footer>
+  <footer>TW SelfSelect · 資料不構成投資建議 · {updated_at}</footer>
 </div>
 <script>
 const DATA = {charts_json};

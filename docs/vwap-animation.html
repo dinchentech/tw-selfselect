@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VWAP 偏離度反轉策略 — 動畫說明</title>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: hsl(220, 18%, 10%); }
+  body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans TC', sans-serif; color: #e8e8e8; user-select: none; }
+
+  #stage { position: relative; width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+  #canvas-wrap { flex: 1; position: relative; overflow: hidden; }
+  #canvas-wrap svg { display: block; width: 100%; height: 100%; }
+
+  .scene-overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    pointer-events: none; opacity: 0;
+    transition: opacity 0.8s ease;
+  }
+  .scene-overlay.active { opacity: 1; }
+
+  .scene-title {
+    font-size: clamp(2rem, 5vw, 4.5rem);
+    font-weight: 700; letter-spacing: 0.02em;
+    text-align: center; line-height: 1.3;
+    text-shadow: 0 2px 20px rgba(0,0,0,0.6);
+  }
+  .scene-sub {
+    font-size: clamp(1rem, 2vw, 1.6rem);
+    font-weight: 400; color: hsl(330, 40%, 70%);
+    margin-top: 0.6em; letter-spacing: 0.03em;
+  }
+  .scene-accent { color: #E11D48; }
+
+  #s1 .scene-title { font-size: clamp(2.2rem, 5.5vw, 5rem); }
+  #s2 .scene-sub { font-size: clamp(0.85rem, 1.6vw, 1.3rem); max-width: 75vw; }
+
+  .buy-sell-title {
+    display: flex; align-items: center; gap: 1.2em; margin-bottom: 0.5em;
+  }
+  .signal-badge {
+    display: inline-block;
+    font-size: clamp(1.2rem, 2.5vw, 2rem);
+    font-weight: 800; padding: 0.3em 0.8em;
+    border-radius: 4px; letter-spacing: 0.05em;
+  }
+  .signal-badge.buy { background: hsl(330, 60%, 35%); color: #fff; }
+  .signal-badge.sell { background: hsl(0, 55%, 40%); color: #fff; }
+
+  .condition-row {
+    display: flex; gap: 1em; flex-wrap: wrap; justify-content: center; margin-top: 1em;
+  }
+  .condition-chip {
+    background: hsla(0,0%,100%,0.08);
+    border: 1px solid hsla(0,0%,100%,0.12);
+    padding: 0.4em 1em; border-radius: 4px;
+    font-size: clamp(0.75rem, 1.2vw, 1rem);
+    color: hsl(330, 20%, 70%);
+  }
+  .condition-chip.active { border-color: #E11D48; color: #E11D48; }
+
+  #s4 .scene-title { font-size: clamp(1.8rem, 4vw, 3.5rem); }
+  .summary-quote {
+    margin-top: 1.5em;
+    font-size: clamp(1.1rem, 2vw, 1.8rem);
+    font-weight: 500; color: #E11D48;
+    letter-spacing: 0.04em;
+    border-top: 1px solid hsla(330,80%,50%,0.3);
+    padding-top: 0.8em;
+  }
+
+  #controls {
+    height: 56px; flex-shrink: 0;
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 24px;
+    background: hsl(220, 15%, 13%);
+    border-top: 1px solid hsla(0,0%,100%,0.06);
+  }
+  #play-btn {
+    width: 32px; height: 32px; flex-shrink: 0;
+    background: none; border: none; cursor: pointer;
+    color: hsl(330, 30%, 70%); font-size: 18px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%; transition: background 0.2s;
+  }
+  #play-btn:hover { background: hsla(0,0%,100%,0.08); }
+  #play-btn svg { width: 18px; height: 18px; fill: currentColor; }
+
+  #progress-track {
+    flex: 1; height: 4px; background: hsla(0,0%,100%,0.12);
+    border-radius: 2px; cursor: pointer; position: relative;
+  }
+  #progress-fill { height: 100%; width: 0%; background: #E11D48; border-radius: 2px; transition: width 50ms linear; }
+  #progress-thumb {
+    position: absolute; top: 50%; left: 0%;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: #E11D48; transform: translate(-50%, -50%);
+    opacity: 0; transition: opacity 0.2s; pointer-events: none;
+  }
+  #progress-track:hover #progress-thumb { opacity: 1; }
+
+  #time-label {
+    font-size: 12px; color: hsla(0,0%,100%,0.4);
+    font-variant-numeric: tabular-nums;
+    width: 60px; text-align: right; flex-shrink: 0;
+  }
+
+  #scene-indicators { display: flex; gap: 6px; flex-shrink: 0; }
+  .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: hsla(0,0%,100%,0.2);
+    transition: all 0.4s ease;
+  }
+  .dot.active { background: #E11D48; transform: scale(1.4); }
+  .dot.done { background: hsla(330, 60%, 40%, 0.5); }
+
+  @media (max-width: 768px) {
+    #controls { height: 48px; padding: 0 12px; gap: 10px; }
+    #s1 .scene-title, .scene-title { font-size: clamp(1.4rem, 6vw, 2.2rem); }
+    .scene-sub { font-size: clamp(0.7rem, 2.5vw, 1rem); }
+    .buy-sell-title { flex-direction: column; gap: 0.5em; }
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <div id="canvas-wrap">
+    <svg id="chart" viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid meet"></svg>
+
+    <!-- Scene 1: Problem -->
+    <div class="scene-overlay" id="s1" style="justify-content:flex-end;padding-bottom:30vh;">
+      <div class="scene-title">恐慌殺低在最低點？<br><span style="color:#E11D48;">法人的成本線才是真底</span></div>
+      <div class="scene-sub">📉 散戶恐慌拋售 · 📊 法人在哪裡護盤？</div>
+    </div>
+
+    <!-- Scene 2: VWAP Explained -->
+    <div class="scene-overlay" id="s2" style="justify-content:flex-end;padding-bottom:30vh;">
+      <div class="scene-title">VWAP<br><span class="scene-accent">大盤法人的真實平均成本</span></div>
+      <div class="scene-sub">
+        <span style="display:inline-block;width:12px;height:12px;background:hsl(330,80%,55%);border-radius:2px;vertical-align:middle;margin-right:6px;"></span> VWAP：成交量加權平均價（法人底倉成本）
+        <span style="display:inline-block;width:12px;height:12px;background:hsla(330,60%,50%,0.25);border-radius:2px;vertical-align:middle;margin:0 6px 0 20px;"></span> ±1.5σ 偏離帶：非理性超跌 / 超漲區
+        <span style="display:inline-block;margin-left:20px;font-size:0.85em;color:hsl(330,20%,50%);">RSI(5) 過濾極端情緒</span>
+      </div>
+    </div>
+
+    <!-- Scene 3: Buy -->
+    <div class="scene-overlay" id="s3" style="justify-content:flex-end;padding-bottom:30vh;">
+      <div class="buy-sell-title">
+        <span class="signal-badge buy">BUY</span>
+        <span class="scene-title" style="font-size:clamp(1.8rem,4.5vw,3.8rem);">非理性低價</span>
+      </div>
+      <div class="scene-sub" style="font-size:clamp(1rem,2vw,1.8rem);">
+        法人成本以下 <span style="color:#f59e0b;font-weight:600;">+</span> 極度恐慌
+      </div>
+      <div class="condition-row">
+        <span class="condition-chip active">價格 &lt; VWAP − 1.5σ（偏離法人成本）</span>
+        <span class="condition-chip active" style="border-color:#0D9488;color:#0D9488;">RSI &lt; 30（極度恐慌）</span>
+      </div>
+    </div>
+
+    <!-- Scene 4: Sell + Summary -->
+    <div class="scene-overlay" id="s4" style="justify-content:flex-end;padding-bottom:30vh;">
+      <div class="buy-sell-title">
+        <span class="signal-badge sell">SELL</span>
+        <span class="scene-title" style="font-size:clamp(1.8rem,4.5vw,3.8rem);">短線過熱</span>
+      </div>
+      <div class="scene-sub" style="font-size:clamp(1rem,2vw,1.8rem);">
+        法人成本以上 <span style="color:#f59e0b;font-weight:600;">+</span> 極度貪婪
+      </div>
+      <div class="condition-row">
+        <span class="condition-chip active">價格 &gt; VWAP + 1.5σ（偏離法人成本）</span>
+        <span class="condition-chip active" style="border-color:#ef4444;color:#ef4444;">RSI &gt; 70（極度貪婪）</span>
+      </div>
+      <div class="summary-quote">均值回歸 — 偏離法人成本越遠，回歸力道越強</div>
+    </div>
+
+    <div style="position:absolute;top:24px;right:32px;display:flex;gap:8px;pointer-events:none;">
+      <div class="dot" data-idx="0"></div>
+      <div class="dot" data-idx="1"></div>
+      <div class="dot" data-idx="2"></div>
+      <div class="dot" data-idx="3"></div>
+    </div>
+    <div style="position:absolute;top:24px;left:32px;pointer-events:none;font-size:13px;color:hsla(0,0%,100%,0.25);letter-spacing:0.05em;font-weight:500;">
+      VWAP · RSI
+    </div>
+  </div>
+
+  <div id="controls">
+    <button id="play-btn" aria-label="播放/暫停">
+      <svg viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20"/></svg>
+    </button>
+    <div id="progress-track">
+      <div id="progress-fill"></div>
+      <div id="progress-thumb"></div>
+    </div>
+    <div id="scene-indicators">
+      <span class="dot active" data-idx="0"></span>
+      <span class="dot" data-idx="1"></span>
+      <span class="dot" data-idx="2"></span>
+      <span class="dot" data-idx="3"></span>
+    </div>
+    <div id="time-label">0:00</div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   VWAP Deviation Reversal Strategy Animation
+   ═══════════════════════════════════════════════════════════════ */
+
+const SCENE_DURATIONS = [10, 18, 18, 18];
+const TOTAL_DURATION = SCENE_DURATIONS.reduce((a,b)=>a+b, 0);
+
+const svg = document.getElementById('chart');
+const NS = 'http://www.w3.org/2000/svg';
+const playBtn = document.getElementById('play-btn');
+const progressFill = document.getElementById('progress-fill');
+const progressThumb = document.getElementById('progress-thumb');
+const progressTrack = document.getElementById('progress-track');
+const timeLabel = document.getElementById('time-label');
+const overlays = [document.getElementById('s1'), document.getElementById('s2'), document.getElementById('s3'), document.getElementById('s4')];
+const allDots = document.querySelectorAll('.dot');
+
+let playing = true;
+let elapsed = 0;
+let lastTs = 0;
+let rafId = null;
+
+/* ── Price Data Generation ──
+   VWAP needs: price oscillates around a "true value" (VWAP),
+   with sharp dips below the lower band and spikes above the upper band. */
+function generatePriceData(n) {
+  const prices = [];
+  let p = 100;
+  for (let i = 0; i < n; i++) {
+    const t = i / n;
+    // The VWAP itself drifts slowly upward
+    // Price oscillates around VWAP with occasional extreme deviations
+    let move = (Math.random() - 0.5) * 0.5;
+    // Add mean reversion toward ~100
+    move += (100 - p) * 0.03;
+    // Sharp dip at 30-42%
+    if (t > 0.28 && t < 0.42) {
+      const dip = -4.0 * (1 - Math.abs(t - 0.35) / 0.07);
+      move += dip * 0.12;
+    }
+    // Sharp spike at 62-78%
+    if (t > 0.60 && t < 0.78) {
+      const spike = +4.5 * (1 - Math.abs(t - 0.69) / 0.09);
+      move += spike * 0.12;
+    }
+    p = p + move * 0.3;
+    p = Math.max(p, 88);
+    prices.push(Math.round(p * 100) / 100);
+  }
+  return prices;
+}
+
+const PRICE_DATA = generatePriceData(130);
+const N = PRICE_DATA.length;
+
+// VWAP — simulated as a slow-moving weighted average (close + noise)
+// In real life: sum(price*volume)/sum(volume). Here we approximate as EMA-like.
+function calcVWAP(prices) {
+  const vwap = [];
+  let cum = 0, vol = 0;
+  for (let i = 0; i < prices.length; i++) {
+    const v = 1 + Math.random() * 0.5; // random volume-ish weight
+    cum += prices[i] * v;
+    vol += v;
+    vwap.push(Math.round((cum / vol) * 100) / 100);
+  }
+  return vwap;
+}
+const VWAP = calcVWAP(PRICE_DATA);
+
+// Deviation & Std
+const DEV = PRICE_DATA.map((p, i) => p - VWAP[i]);
+const DEV_STD = (() => {
+  const result = [];
+  for (let i = 0; i < DEV.length; i++) {
+    if (i < 20) { result.push(null); continue; }
+    let sum = 0, mean = 0;
+    for (let j = i - 19; j <= i; j++) mean += DEV[j];
+    mean /= 20;
+    for (let j = i - 19; j <= i; j++) sum += (DEV[j] - mean) ** 2;
+    result.push(Math.sqrt(sum / 20));
+  }
+  return result;
+})();
+
+const SIGMA = 1.5;
+const UPPER = VWAP.map((v, i) => DEV_STD[i] !== null ? v + SIGMA * DEV_STD[i] : null);
+const LOWER = VWAP.map((v, i) => DEV_STD[i] !== null ? v - SIGMA * DEV_STD[i] : null);
+
+// RSI(5)
+function calcRSI(data, period) {
+  const result = [null];
+  for (let i = 1; i < data.length; i++) {
+    if (i < period) { result.push(null); continue; }
+    let gains = 0, losses = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      const diff = data[j] - data[j - 1];
+      if (diff > 0) gains += diff; else losses -= diff;
+    }
+    if (losses === 0) { result.push(100); continue; }
+    const rs = gains / losses;
+    result.push(100 - 100 / (1 + rs));
+  }
+  return result;
+}
+const RSI5 = calcRSI(PRICE_DATA, 5);
+
+// Pre-compute buy/sell indices (yesterday's bands)
+const BUY_IDX = (() => { for (let i = 22; i < N; i++) if (LOWER[i-1] !== null && PRICE_DATA[i] < LOWER[i-1] && RSI5[i] < 30) return i; return -1; })();
+const SELL_IDX = (() => { for (let i = 22; i < N; i++) if (UPPER[i-1] !== null && PRICE_DATA[i] > UPPER[i-1] && RSI5[i] > 70) return i; return -1; })();
+
+// Scaling
+const allVals = [].concat(PRICE_DATA, VWAP);
+for (let i = 0; i < N; i++) {
+  if (UPPER[i] !== null) allVals.push(UPPER[i]);
+  if (LOWER[i] !== null) allVals.push(LOWER[i]);
+}
+let priceMin = Math.min(...allVals), priceMax = Math.max(...allVals);
+const pad = (priceMax - priceMin) * 0.15;
+priceMin -= pad; priceMax += pad;
+
+function p2y(p) { return 600 - ((p - priceMin) / (priceMax - priceMin)) * 520 - 40; }
+function x(i) { return 30 + (i / (N - 1)) * 940; }
+
+/* ── Chart Building ── */
+function buildChart() {
+  svg.innerHTML = '';
+  const defs = document.createElementNS(NS, 'defs');
+  defs.innerHTML = `
+    <linearGradient id="bandGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="hsla(330,60%,50%,0.10)"/>
+      <stop offset="100%" stop-color="hsla(330,60%,50%,0.02)"/>
+    </linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  `;
+  svg.appendChild(defs);
+
+  // Grid
+  for (let y = 60; y < 560; y += 80) {
+    const line = document.createElementNS(NS, 'line');
+    line.setAttribute('x1', '30'); line.setAttribute('x2', '970');
+    line.setAttribute('y1', y); line.setAttribute('y2', y);
+    line.setAttribute('stroke', 'hsla(0,0%,100%,0.04)');
+    line.setAttribute('stroke-width', '1');
+    svg.appendChild(line);
+  }
+
+  // Deviation band fill
+  const bandG = document.createElementNS(NS, 'g');
+  bandG.id = 'band-fill'; svg.appendChild(bandG);
+
+  // Upper band line
+  const upperPoly = document.createElementNS(NS, 'polyline');
+  upperPoly.id = 'upper-line';
+  upperPoly.setAttribute('fill', 'none');
+  upperPoly.setAttribute('stroke', 'hsla(330,60%,50%,0.3)');
+  upperPoly.setAttribute('stroke-width', '1.5');
+  svg.appendChild(upperPoly);
+
+  // Lower band line
+  const lowerPoly = document.createElementNS(NS, 'polyline');
+  lowerPoly.id = 'lower-line';
+  lowerPoly.setAttribute('fill', 'none');
+  lowerPoly.setAttribute('stroke', 'hsla(160,60%,50%,0.3)');
+  lowerPoly.setAttribute('stroke-width', '1.5');
+  svg.appendChild(lowerPoly);
+
+  // VWAP line (thick, authoritative)
+  const vwapPath = document.createElementNS(NS, 'path');
+  vwapPath.id = 'vwap-line';
+  vwapPath.setAttribute('fill', 'none');
+  vwapPath.setAttribute('stroke', 'hsl(330,80%,55%)');
+  vwapPath.setAttribute('stroke-width', '3');
+  vwapPath.setAttribute('filter', 'url(#glow)');
+  svg.appendChild(vwapPath);
+
+  // Price line
+  const pricePath = document.createElementNS(NS, 'path');
+  pricePath.id = 'price-line';
+  pricePath.setAttribute('fill', 'none');
+  pricePath.setAttribute('stroke', 'hsl(42,80%,55%)');
+  pricePath.setAttribute('stroke-width', '2');
+  pricePath.setAttribute('filter', 'url(#glow)');
+  svg.appendChild(pricePath);
+
+  // RSI group
+  const rsiG = document.createElementNS(NS, 'g');
+  rsiG.id = 'rsi-group';
+  svg.appendChild(rsiG);
+
+  // Labels
+  const lbl1 = document.createElementNS(NS, 'text');
+  lbl1.setAttribute('x', '28'); lbl1.setAttribute('y', '48');
+  lbl1.setAttribute('fill', 'hsl(330,80%,55%)');
+  lbl1.setAttribute('font-size', '11');
+  lbl1.setAttribute('font-family', 'system-ui');
+  lbl1.textContent = 'VWAP 法人成本';
+  svg.appendChild(lbl1);
+
+  const lblU = document.createElementNS(NS, 'text');
+  lblU.setAttribute('x', '28'); lblU.setAttribute('y', '62');
+  lblU.setAttribute('fill', 'hsla(330,60%,50%,0.35)');
+  lblU.setAttribute('font-size', '10');
+  lblU.setAttribute('font-family', 'system-ui');
+  lblU.textContent = '+1.5σ 超漲';
+  svg.appendChild(lblU);
+
+  const lblL = document.createElementNS(NS, 'text');
+  lblL.setAttribute('x', '28'); lblL.setAttribute('y', '555');
+  lblL.setAttribute('fill', 'hsla(160,60%,50%,0.35)');
+  lblL.setAttribute('font-size', '10');
+  lblL.setAttribute('font-family', 'system-ui');
+  lblL.textContent = '−1.5σ 超跌';
+  svg.appendChild(lblL);
+}
+
+/* ── Chart Update ── */
+function updateChart(revealIdx) {
+  const visible = Math.max(1, Math.floor(revealIdx));
+  const bandG = document.getElementById('band-fill');
+  const upperLine = document.getElementById('upper-line');
+  const lowerLine = document.getElementById('lower-line');
+  const vwapLine = document.getElementById('vwap-line');
+  const priceLine = document.getElementById('price-line');
+  const rsiGroup = document.getElementById('rsi-group');
+  const sceneIdx = getSceneAtTime(elapsed);
+  const isBuy = (sceneIdx === 2);
+  const isSell = (sceneIdx === 3);
+
+  // Build paths
+  let upperPts = '', lowerPts = '', vwapD = '', priceD = '';
+  for (let i = 0; i < Math.min(visible, N); i++) {
+    const xi = x(i);
+    if (UPPER[i] !== null) upperPts += (upperPts === '' ? '' : ' ') + xi + ',' + p2y(UPPER[i]);
+    if (LOWER[i] !== null) lowerPts += (lowerPts === '' ? '' : ' ') + xi + ',' + p2y(LOWER[i]);
+    vwapD += (vwapD === '' ? 'M' : 'L') + xi + ',' + p2y(VWAP[i]);
+    priceD += (priceD === '' ? 'M' : 'L') + xi + ',' + p2y(PRICE_DATA[i]);
+  }
+
+  // Band fill
+  let bandD = '';
+  for (let i = 0; i < Math.min(visible, N); i++) {
+    if (UPPER[i] !== null) bandD += (bandD === '' ? 'M' : 'L') + x(i) + ',' + p2y(UPPER[i]);
+  }
+  for (let i = Math.min(visible, N) - 1; i >= 0; i--) {
+    if (LOWER[i] !== null) bandD += 'L' + x(i) + ',' + p2y(LOWER[i]);
+  }
+  if (bandD) bandD += 'Z';
+  bandG.innerHTML = '';
+  if (bandD) {
+    const fill = document.createElementNS(NS, 'path');
+    fill.setAttribute('d', bandD);
+    fill.setAttribute('fill', 'url(#bandGrad)');
+    fill.setAttribute('stroke', 'none');
+    bandG.appendChild(fill);
+  }
+
+  upperLine.setAttribute('points', upperPts || '0,0');
+  lowerLine.setAttribute('points', lowerPts || '0,0');
+  vwapLine.setAttribute('d', vwapD || 'M0,0');
+  priceLine.setAttribute('d', priceD || 'M0,0');
+
+  // Highlight bands
+  const upperDefault = 'hsla(330,60%,50%,0.3)';
+  const lowerDefault = 'hsla(160,60%,50%,0.3)';
+  upperLine.setAttribute('stroke', isBuy ? '#ef4444' : upperDefault);
+  upperLine.setAttribute('stroke-width', isBuy ? '3' : '1.5');
+  upperLine.setAttribute('opacity', isBuy ? (0.6 + 0.4 * Math.sin(elapsed * 4)) : '1');
+  lowerLine.setAttribute('stroke', isSell ? '#ef4444' : lowerDefault);
+  lowerLine.setAttribute('stroke-width', isSell ? '3' : '1.5');
+  lowerLine.setAttribute('opacity', isSell ? (0.6 + 0.4 * Math.sin(elapsed * 4)) : '1');
+
+  // RSI indicator
+  rsiGroup.innerHTML = '';
+  if (visible > 20) {
+    // 買/賣場景鎖定顯示觸發當下的 RSI，而非最後一根 K 棒
+    let rsiVal;
+    if (isBuy && BUY_IDX >= 0) {
+      rsiVal = RSI5[BUY_IDX];
+    } else if (isSell && SELL_IDX >= 0) {
+      rsiVal = RSI5[SELL_IDX];
+    } else {
+      rsiVal = RSI5[Math.min(visible - 1, RSI5.length - 1)];
+    }
+    if (rsiVal !== null) {
+      const gx = 840, gy = 30, gw = 135, gh = 50;
+      const rsiLow = rsiVal < 30, rsiHigh = rsiVal > 70;
+      const bg = document.createElementNS(NS, 'rect');
+      bg.setAttribute('x', gx); bg.setAttribute('y', gy);
+      bg.setAttribute('width', gw); bg.setAttribute('height', gh);
+      bg.setAttribute('rx', '4');
+      bg.setAttribute('fill', 'hsla(0,0%,0%,0.5)');
+      bg.setAttribute('stroke', rsiLow ? '#0D9488' : rsiHigh ? '#ef4444' : 'hsla(0,0%,100%,0.12)');
+      bg.setAttribute('stroke-width', '1');
+      rsiGroup.appendChild(bg);
+
+      const title = document.createElementNS(NS, 'text');
+      title.setAttribute('x', gx + gw/2); title.setAttribute('y', gy + 17);
+      title.setAttribute('text-anchor', 'middle');
+      title.setAttribute('fill', 'hsla(0,0%,100%,0.5)');
+      title.setAttribute('font-size', '10');
+      title.setAttribute('font-family', 'system-ui');
+      title.textContent = 'RSI(5)';
+      rsiGroup.appendChild(title);
+
+      const valText = document.createElementNS(NS, 'text');
+      valText.setAttribute('x', gx + gw/2); valText.setAttribute('y', gy + 38);
+      valText.setAttribute('text-anchor', 'middle');
+      valText.setAttribute('fill', rsiLow ? '#0D9488' : rsiHigh ? '#ef4444' : 'hsl(0,0%,70%)');
+      valText.setAttribute('font-size', '18');
+      valText.setAttribute('font-weight', '700');
+      valText.setAttribute('font-family', 'system-ui');
+      valText.textContent = Math.round(rsiVal) + (rsiLow ? ' 超賣' : rsiHigh ? ' 超買' : '');
+      rsiGroup.appendChild(valText);
+
+      // Mini bar
+      const barX = gx + 15, barY = gy + 44, barW = gw - 30, barH = 4;
+      const barBg = document.createElementNS(NS, 'rect');
+      barBg.setAttribute('x', barX); barBg.setAttribute('y', barY);
+      barBg.setAttribute('width', barW); barBg.setAttribute('height', barH);
+      barBg.setAttribute('rx', '2');
+      barBg.setAttribute('fill', 'hsla(0,0%,100%,0.1)');
+      rsiGroup.appendChild(barBg);
+
+      const barFill = document.createElementNS(NS, 'rect');
+      barFill.setAttribute('x', barX); barFill.setAttribute('y', barY);
+      barFill.setAttribute('width', Math.max((rsiVal/100)*barW, 0)); barFill.setAttribute('height', barH);
+      barFill.setAttribute('rx', '2');
+      barFill.setAttribute('fill', rsiLow ? '#0D9488' : rsiHigh ? '#ef4444' : 'hsl(0,0%,50%)');
+      rsiGroup.appendChild(barFill);
+    }
+  }
+
+  // Zone markers
+  document.querySelectorAll('.zone-marker').forEach(el => el.remove());
+  if (isBuy && BUY_IDX >= 0 && BUY_IDX < visible) {
+    const cx = x(BUY_IDX), cy = p2y(PRICE_DATA[BUY_IDX]);
+    const g = document.createElementNS(NS, 'g');
+    g.classList.add('zone-marker');
+    const c = document.createElementNS(NS, 'circle');
+    c.setAttribute('cx', cx); c.setAttribute('cy', cy); c.setAttribute('r', '5');
+    c.setAttribute('fill', 'hsla(160,60%,50%,0.3)'); c.setAttribute('stroke', '#0D9488'); c.setAttribute('stroke-width', '2');
+    g.appendChild(c);
+    const t = document.createElementNS(NS, 'text');
+    t.setAttribute('x', cx); t.setAttribute('y', cy - 12); t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('fill', '#0D9488'); t.setAttribute('font-size', '18'); t.setAttribute('font-weight', '700');
+    t.textContent = '▲';
+    g.appendChild(t);
+    svg.appendChild(g);
+  } else if (isSell && SELL_IDX >= 0 && SELL_IDX < visible) {
+    const cx = x(SELL_IDX), cy = p2y(PRICE_DATA[SELL_IDX]);
+    const g = document.createElementNS(NS, 'g');
+    g.classList.add('zone-marker');
+    const c = document.createElementNS(NS, 'circle');
+    c.setAttribute('cx', cx); c.setAttribute('cy', cy); c.setAttribute('r', '5');
+    c.setAttribute('fill', 'hsla(0,55%,50%,0.3)'); c.setAttribute('stroke', '#ef4444'); c.setAttribute('stroke-width', '2');
+    g.appendChild(c);
+    const t = document.createElementNS(NS, 'text');
+    t.setAttribute('x', cx); t.setAttribute('y', cy + 16); t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('fill', '#ef4444'); t.setAttribute('font-size', '18'); t.setAttribute('font-weight', '700');
+    t.textContent = '▼';
+    g.appendChild(t);
+    svg.appendChild(g);
+  }
+}
+
+/* ── Scene Management ── */
+function getSceneAtTime(t) {
+  let acc = 0;
+  for (let i = 0; i < SCENE_DURATIONS.length; i++) { acc += SCENE_DURATIONS[i]; if (t < acc) return i; }
+  return SCENE_DURATIONS.length - 1;
+}
+
+function updateScenes(t) {
+  const current = getSceneAtTime(t);
+  overlays.forEach((el, i) => el.classList.toggle('active', i === current));
+  allDots.forEach((dot, i) => {
+    dot.classList.toggle('active', i === current);
+    dot.classList.toggle('done', i < current);
+  });
+}
+
+/* ── Main Loop ── */
+function loop(ts) {
+  if (!lastTs) lastTs = ts;
+  const dt = (ts - lastTs) / 1000;
+  lastTs = ts;
+
+  if (playing) {
+    elapsed += dt;
+    if (elapsed >= TOTAL_DURATION) { elapsed = TOTAL_DURATION; playing = false; updatePlayButton(); }
+  }
+
+  const progress = Math.min(elapsed / TOTAL_DURATION, 1);
+  progressFill.style.width = (progress * 100) + '%';
+  progressThumb.style.left = (progress * 100) + '%';
+
+  const mins = Math.floor(elapsed / 60);
+  const secs = Math.floor(elapsed % 60);
+  timeLabel.textContent = mins + ':' + String(secs).padStart(2, '0');
+
+  const revealProgress = Math.min(elapsed / 3, 1);
+  updateChart(revealProgress * N);
+  updateScenes(elapsed);
+
+  rafId = requestAnimationFrame(loop);
+}
+
+function updatePlayButton() {
+  playBtn.innerHTML = playing
+    ? '<svg viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20"/></svg>'
+    : '<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
+}
+
+playBtn.addEventListener('click', () => {
+  playing = !playing;
+  if (playing) { lastTs = 0; if (elapsed >= TOTAL_DURATION) elapsed = 0; rafId = requestAnimationFrame(loop); }
+  updatePlayButton();
+});
+
+progressTrack.addEventListener('click', (e) => {
+  const rect = progressTrack.getBoundingClientRect();
+  const pct = (e.clientX - rect.left) / rect.width;
+  elapsed = Math.min(pct * TOTAL_DURATION, TOTAL_DURATION);
+  if (!playing) { playing = true; lastTs = 0; rafId = requestAnimationFrame(loop); updatePlayButton(); }
+});
+
+buildChart();
+lastTs = 0;
+rafId = requestAnimationFrame(loop);
+updatePlayButton();
+</script>
+</body>
+</html>
