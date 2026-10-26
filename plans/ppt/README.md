@@ -67,3 +67,77 @@ W2 的部署章節（s11–s17）與 W6 的部署頁（s2、s13）改成實際�
 | W6 s2（講稿）、s13 | 第五步部署改成 `./deploy_source.sh`；s13 的舊 `deploy_user.sh` 截圖移除，留「實際輸出截圖待補」 |
 
 仍保留的母專案痕跡（刻意的）：GCP VM 實例名稱仍為 `tw-autotrader`、GitHub 連結指向母專案。
+
+## 語音流水線（配音版 / MP4）
+
+從母專案搬過來的三支腳本，放在 `plans/`：
+
+| 腳本 | 用途 |
+|---|---|
+| `plans/generate_narration.sh` | 主流水線：`extract` 抽逐頁文字 → `build` 講稿＋配音＋產生講稿版／配音版 |
+| `plans/generate_voiceover.sh` | 只重配音（改完講稿重跑，不需要原始 PPT） |
+| `plans/ppt_to_mp4.sh` | 配音版 → MP4（LibreOffice→PDF→PNG，逐頁配 mp3） |
+
+### 前置需求
+
+- `node` 18+、`ffmpeg`／`ffprobe`、LibreOffice（`soffice`）
+- huashu-design skill：`/home/frank/.agents/skills/huashu-design`
+  （內含 `scripts/narrate-pipeline.mjs`、`scripts/tts-doubao.mjs`）
+- 豆包 TTS 金鑰放**該 skill 根目錄**的 `.env`：
+  `DOUBAO_TTS_API_KEY`、`DOUBAO_TTS_VOICE_ID`（`S_` 開頭＝複刻音色）、
+  `DOUBAO_TTS_CLUSTER`、`DOUBAO_TTS_ENDPOINT`
+- `python-pptx`／`pypdfium2`：腳本會優先用本專案 `.venv/bin/python3`
+  （沒有 `.venv` 才退回系統 `python3`）
+
+### 用法
+
+```bash
+cd ~/tw-selfselect/plans
+
+# 1. 抽逐頁文字（給 AI 寫講稿用；不花錢、不呼叫 TTS）
+./generate_narration.sh extract "ppt/TW-SELFSELECT台股買賣自動化系統-W1-講稿版.pptx"
+
+# 2. 講稿 .md → 配音 + 講稿版 + 配音版（會呼叫豆包 TTS，17 頁約 2–5 分鐘）
+./generate_narration.sh build \
+  "ppt/TW-SELFSELECT台股買賣自動化系統-W1-講稿版.pptx" \
+  "ppt/TW-SELFSELECT台股買賣自動化系統-W1-解說腳本.md"
+
+# 3. 只改了講稿、要重配音
+./generate_voiceover.sh "ppt/TW-SELFSELECT台股買賣自動化系統-W1-解說腳本.md" \
+                        "ppt/TW-SELFSELECT台股買賣自動化系統-W1-講稿版.pptx"
+
+# 4. 配音版 → MP4
+./ppt_to_mp4.sh "ppt/TW-SELFSELECT台股買賣自動化系統-W1-配音版.pptx"
+```
+
+講稿 `.md` 格式（`## slide-N （X 分 Y 秒）` 分段；`**講師提示**：` 不配音、只寫進備註；
+`> ` 開頭是引言、不配音）：
+
+```markdown
+## slide-7 （1 分 30 秒）
+左邊是 VM 的實機儀表板截圖……
+**講師提示**：強調示範頁數字不是績效。
+```
+
+### 產出
+
+```
+plans/ppt/<名稱>-內容.txt            （extract：逐頁文字，給 AI 寫稿）
+plans/ppt/<名稱>-narration-script.md （講稿剝掉提示後的 TTS 專用稿）
+plans/ppt/<名稱>-講稿版.pptx          （備註＝講稿）
+plans/ppt/<名稱>-配音版.pptx          （每頁右下角嵌入 mp3）
+plans/ppt/_narration_<安全名>/        （audio/slide-N.mp3、voiceover.mp3、timeline.json）
+plans/ppt/<名稱>.mp4
+```
+
+以上產物（配音版、MP4、`_narration_*`、內容txt、pipeline 稿）都已加進 `.gitignore`，
+只有「講稿版」進版控。
+
+### 對母專案做的兩處修正
+
+1. `python-pptx`／`pypdfium2` 改走 `plans/../.venv/bin/python3`（本專案沒有系統層 pip 套件）。
+2. `ppt_to_mp4.sh` 的逐頁合成加上 `-af apad` 並移除 `-shortest`，
+   避免音訊比畫面短時把段落提前截斷（時間軸長度會少 1–2 秒）。
+
+驗證：以 2 頁測試簡報跑完整 build → 配音版（2 頁備註＋音訊驗證通過）→ MP4
+（9.94 秒，與 timeline 的 4.82+5.06 相符）全程無誤。

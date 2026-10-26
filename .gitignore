@@ -50,3 +50,11 @@ node_modules/
 # LibreOffice 暫存鎖檔
 plans/ppt/.~lock.*
 plans/ppt/~$*
+
+# 語音流水線產物（可重新產生，不進版控）
+plans/ppt/_narration_*/
+plans/ppt/*-配音版.pptx
+plans/ppt/*.mp4
+plans/ppt/*-內容.txt
+plans/ppt/*-narration-script.md
+plans/ppt/*-pipeline.md
