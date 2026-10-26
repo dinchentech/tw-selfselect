@@ -1,21 +1,39 @@
-MIT License
+TW SelfSelect（tw-selfselect）— 專有授權（Proprietary License）
+版權所有 © 2026 dinchentech。All rights reserved.
 
-Copyright (c) 2026 dinchentech
+════════════════════════════════════════════════════════════════════
+一、使用範圍
+════════════════════════════════════════════════════════════════════
+本專案（TW SelfSelect，以下稱「本系統」）之原始碼、文件、教材與投影片，
+僅供個人學習、研究與學術使用（personal, research and academic use only）。
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+════════════════════════════════════════════════════════════════════
+二、禁止事項
+════════════════════════════════════════════════════════════════════
+未經原作者（dinchentech）書面明確授權，嚴格禁止：
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. 將本系統之全部或部分原始碼進行商業販售、出租或轉讓。
+2. 將本系統包裝為付費軟體、付費雲端服務或訂閱制產品。
+3. 利用本專案進行任何直接或間接獲取商業利益之行為。
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+════════════════════════════════════════════════════════════════════
+三、允許事項
+════════════════════════════════════════════════════════════════════
+- 個人學習、研究、學術使用。
+- 在不涉及商業利益的前提下，可修改與分享，但必須保留本授權聲明與著作權標示。
+
+════════════════════════════════════════════════════════════════════
+四、第三方元件與資料（不屬於本授權範圍）
+════════════════════════════════════════════════════════════════════
+本系統使用之第三方套件（Python 套件、玉山證券 SDK 等）與資料來源
+（TWSE、FinMind、Yahoo Finance 等）不在本授權範圍內，
+應遵守其各自之授權條款與使用限制。
+
+════════════════════════════════════════════════════════════════════
+五、免責聲明（DISCLAIMER）
+════════════════════════════════════════════════════════════════════
+本系統依「現狀（AS-IS）」提供，不帶有任何形式之明示或默示保證，包括但不限於
+對適銷性、特定目的適用性及不侵權之暗示保證。原作者在任何情況下，均不對因使用
+或無法使用本系統所致之任何直接、間接、偶發、特殊、懲罰性或衍生性損失負任何
+法律或賠償責任。使用者須自行承擔使用本系統之所有風險；本專案不構成任何投資建議，
+回測績效不代表未來實績。
