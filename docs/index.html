@@ -58,37 +58,44 @@
 
 <div class="container">
   <h1>📊 TW SelfSelect 績效儀表板 <span style="font-size:.9rem;color:#999;font-weight:400;">v1.0.0</span></h1>
-  <div class="subtitle">最後更新：2026-10-26 13:34 · Group 1 + Group 2 雙群組</div>
+  <div class="subtitle">最後更新：2026-10-26 13:37 · 自選股（單一資金腿）</div>
 
   <!-- 總覽卡片 -->
    <div class="cards">
      <div class="card"><div class="label">總已實現損益</div><div class="value positive">+24,129</div></div>
      <div class="card"><div class="label">總交易次數</div><div class="value">3</div></div>
-     <div class="card"><div class="label">Group 1 損益</div><div class="value positive">+24,129</div></div>
-     <div class="card"><div class="label">Group 2 損益</div><div class="value positive">+0</div></div>
+     <div class="card"><div class="label">本腿損益</div><div class="value positive">+24,129</div></div>
    </div>
 
    <!-- 未平倉部位卡片 -->
    <div class="cards">
-     <div class="card"><div class="label">未實現損益</div><div class="value positive">+0</div></div>
-     <div class="card"><div class="label">持倉市值</div><div class="value">0</div></div>
-     <div class="card"><div class="label">持倉檔數</div><div class="value">0</div></div>
-     <div class="card"><div class="label">總權益</div><div class="value positive">+24,129</div></div>
+     <div class="card"><div class="label">未實現損益</div><div class="value positive">+12,893</div></div>
+     <div class="card"><div class="label">持倉市值</div><div class="value">412,819.0</div></div>
+     <div class="card"><div class="label">持倉檔數</div><div class="value">2</div></div>
+     <div class="card"><div class="label">總權益</div><div class="value positive">+37,022</div></div>
    </div>
-<div style="margin:.6rem 0 1rem;padding:.7rem .9rem;border-left:4px solid #e0a800;background:#2a2416;color:#e8d9a0;border-radius:4px;font-size:.88rem;line-height:1.5;">⚠️ <b>帳務不一致</b>（三本帳稽核）：<b>未入帳部位</b>（已在 CSV、不在 holdings.json）：1301 × 2,797 股、1802 × 3,076 股；<b>缺少狀態檔</b>：holdings.json、stock_allocation.json（無法對帳）<br><span style="color:#bda86a;">這些部位不在「未平倉部位」清單裡，而且<b>永遠不會被自動賣出</b>（賣出與孤兒清倉只認 <code>holdings.json</code>）。持倉市值／總權益也因此未計入它們。</span></div>
+
   <div class="group-section">
     <div class="section-title">📋 未平倉部位</div>
-    <div class="empty">📭 無未平倉部位</div>
+    <div class="subtitle" style="margin:-6px 0 8px;">📈 參考市價：2026-10-22 ⚠️非當日</div>
+    <table><thead><tr><th>標的</th><th>股數</th><th>平均成本</th><th>市價</th><th>市值</th><th>未實現損益</th><th>報酬率</th><th>最後買進日</th></tr></thead><tbody>
+      <tr><td>1301</td><td>2797</td><td>72</td><td>74</td>
+          <td>206,419</td><td class="positive">+6,433</td>
+          <td class="positive">+3.22%</td><td>2026-09-30</td></tr>
+      <tr><td>1802</td><td>3076</td><td>65</td><td>67</td>
+          <td>206,400</td><td class="positive">+6,460</td>
+          <td class="positive">+3.23%</td><td>2026-09-30</td></tr>
+
+    </tbody></table>
   </div>
 
   <div class="charts">
     <div class="chart-box full"><h3>📈 累積損益曲線</h3><canvas id="chartPnlCombined"></canvas></div>
-    <div class="chart-box"><h3>📊 各標的損益 — Group 1</h3><canvas id="chartSymbolsG1"></canvas></div>
-    <div class="chart-box"><h3>📊 各標的損益 — Group 2</h3><canvas id="chartSymbolsG2"></canvas></div>
+    <div class="chart-box"><h3>📊 各標的損益</h3><canvas id="chartSymbolsG1"></canvas></div>
   </div>
 
   <div class="group-section">
-    <div class="group-label g1">Group 1 固定標的策略</div>
+    <div class="group-label g1">自選股策略明細</div>
     <div class="cards">
       <div class="card"><div class="label">已實現損益</div><div class="value positive">+24,129</div></div>
       <div class="card"><div class="label">交易次數</div><div class="value">3</div></div>
@@ -104,17 +111,13 @@
                     <td class="negative">-6,098</td><td>0.0%</td></tr><tr><td>1301</td><td>0</td><td>1</td><td>0</td>
                     <td class="positive">+0</td><td>0%</td></tr><tr><td>1802</td><td>0</td><td>1</td><td>0</td>
                     <td class="positive">+0</td><td>0%</td></tr></tbody></table>
-  <div class="group-section">
-    <div class="group-label g2">Group 2 法人抬轎動能策略</div>
-    <div class="empty">📭 尚無交易紀錄</div>
-  </div>
   <div class="strategy-section">
     <div class="section-title">🎬 六策略動畫說明</div>
     <div class="strategy-links">
       <a href="bollinger-animation.html" target="_blank" rel="noopener" class="strategy-link">布林通道反轉</a><a href="vwap-animation.html" target="_blank" rel="noopener" class="strategy-link">VWAP 偏離反轉</a><a href="ma_cross-animation.html" target="_blank" rel="noopener" class="strategy-link">均線交叉</a><a href="breakout-animation.html" target="_blank" rel="noopener" class="strategy-link">唐奇安突破</a><a href="keep_wait策略說明.html" target="_blank" rel="noopener" class="strategy-link">Keep & Wait 低接</a>
     </div>
   </div>
-  <footer>TW SelfSelect · 資料不構成投資建議 · 2026-10-26 13:34</footer>
+  <footer>TW SelfSelect · 資料不構成投資建議 · 2026-10-26 13:37</footer>
 </div>
 <script>
 const DATA = {"labels": ["2026-10-14", "2026-10-16", "2026-10-20"], "curve_g1": [20868.0, 14770.0, 24129.0], "curve_g2": [null, null, null], "symbol_stats_g1": [{"symbol": "6505", "trades": 1, "buys": 1, "sells": 1, "pnl": 9359.0, "win_rate": 100.0}, {"symbol": "1101", "trades": 1, "buys": 1, "sells": 1, "pnl": 20868.0, "win_rate": 100.0}, {"symbol": "4938", "trades": 1, "buys": 1, "sells": 1, "pnl": -6098.0, "win_rate": 0.0}, {"symbol": "1301", "trades": 0, "buys": 1, "sells": 0, "pnl": 0, "win_rate": 0}, {"symbol": "1802", "trades": 0, "buys": 1, "sells": 0, "pnl": 0, "win_rate": 0}], "symbol_stats_g2": [], "pnl_list_g1": [{"date": "2026-10-14", "time": "13:26", "symbol": "1101", "action": "SELL", "price": 29.1, "qty": 7633, "pnl": 20868.0, "pnl_pct": 10.42, "cumulative": 20868.0}, {"date": "2026-10-16", "time": "13:26", "symbol": "4938", "action": "SELL", "price": 98.5, "qty": 1980, "pnl": -6098.0, "pnl_pct": -3.04, "cumulative": 14770.0}, {"date": "2026-10-20", "time": "13:26", "symbol": "6505", "action": "SELL", "price": 109.5, "qty": 1923, "pnl": 9359.0, "pnl_pct": 4.67, "cumulative": 24129.0}], "pnl_list_g2": [], "g2_json": {}};
@@ -125,11 +128,8 @@ const DATA = {"labels": ["2026-10-14", "2026-10-16", "2026-10-20"], "curve_g1": 
   if (!canvas || !DATA.labels || !DATA.labels.length) return;
   const ds = [];
   if (DATA.curve_g1 && DATA.curve_g1.some(v => v !== null))
-    ds.push({ label: 'Group 1', data: DATA.curve_g1, borderColor: '#e74c3c',
-             backgroundColor: 'rgba(231,76,60,.08)', fill: 1, tension: .3, pointRadius: 3 });
-  if (DATA.curve_g2 && DATA.curve_g2.some(v => v !== null))
-    ds.push({ label: 'Group 2', data: DATA.curve_g2, borderColor: '#2980b9',
-             backgroundColor: 'rgba(41,128,185,.08)', fill: 2, tension: .3, pointRadius: 3 });
+    ds.push({ label: '累積損益', data: DATA.curve_g1, borderColor: '#e74c3c',
+             backgroundColor: 'rgba(231,76,60,.08)', fill: 0, tension: .3, pointRadius: 3 });
   if (!ds.length) return;
   new Chart(canvas, {
     type: 'line',
@@ -139,7 +139,7 @@ const DATA = {"labels": ["2026-10-14", "2026-10-16", "2026-10-20"], "curve_g1": 
   });
 })();
 
-// ─── Group 1 各標的損益 ───
+// ─── 各標的損益 ───
 (function() {
   const canvas = document.getElementById('chartSymbolsG1');
   if (!canvas || !DATA.symbol_stats_g1 || !DATA.symbol_stats_g1.length) return;
@@ -153,19 +153,6 @@ const DATA = {"labels": ["2026-10-14", "2026-10-16", "2026-10-20"], "curve_g1": 
   });
 })();
 
-// ─── Group 2 各標的損益 ───
-(function() {
-  const canvas = document.getElementById('chartSymbolsG2');
-  if (!canvas || !DATA.symbol_stats_g2 || !DATA.symbol_stats_g2.length) return;
-  new Chart(canvas, {
-    type: 'bar',
-    data: { labels: DATA.symbol_stats_g2.map(s=>s.symbol),
-            datasets: [{ label: '損益', data: DATA.symbol_stats_g2.map(s=>s.pnl),
-                         backgroundColor: DATA.symbol_stats_g2.map(s=>s.pnl>=0?'rgba(231,76,60,.7)':'rgba(52,152,219,.7)') }] },
-    options: { responsive: true, plugins: { legend: { display: false } },
-               scales: { y: { ticks: { callback: v=>v+'元' } } } }
-  });
-})();
 </script>
 </body>
 </html>

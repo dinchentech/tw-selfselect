@@ -1,4 +1,4 @@
-""" 讀取 logs/performance.csv（Group 1 + Group 2）→ logs/dashboard.html（Chart.js 儀表板）"""
+""" 讀取 logs/performance.csv（自選股單一資金腿）→ logs/dashboard.html（Chart.js 儀表板）"""
 
 import json
 import os
@@ -622,14 +622,13 @@ def build_html(trades_df: pd.DataFrame) -> str:
 <body>
 <div class="container">
   <h1>📊 TW SelfSelect 績效儀表板 <span style="font-size:.9rem;color:#999;font-weight:400;">v{APP_VERSION}</span></h1>
-  <div class="subtitle">最後更新：{updated_at} · Group 1 + Group 2 雙群組</div>
+  <div class="subtitle">最後更新：{updated_at} · 自選股（單一資金腿）</div>
 
   <!-- 總覽卡片 -->
    <div class="cards">
      <div class="card"><div class="label">總已實現損益</div><div class="value {"positive" if total_pnl >= 0 else "negative"}">{v(total_pnl)}</div></div>
      <div class="card"><div class="label">總交易次數</div><div class="value">{total_trades}</div></div>
-     <div class="card"><div class="label">Group 1 損益</div><div class="value {"positive" if stats_g1['total_pnl'] >= 0 else "negative"}">{v(stats_g1['total_pnl'])}</div></div>
-     <div class="card"><div class="label">Group 2 損益</div><div class="value {"positive" if stats_g2['total_pnl'] >= 0 else "negative"}">{v(stats_g2['total_pnl'])}</div></div>
+     <div class="card"><div class="label">本腿損益</div><div class="value {"positive" if stats_g1['total_pnl'] >= 0 else "negative"}">{v(stats_g1['total_pnl'])}</div></div>
    </div>
 
    <!-- 未平倉部位卡片 -->
@@ -686,8 +685,7 @@ def build_html(trades_df: pd.DataFrame) -> str:
     html += """
   <div class="charts">
     <div class="chart-box full"><h3>📈 累積損益曲線</h3><canvas id="chartPnlCombined"></canvas></div>
-    <div class="chart-box"><h3>📊 各標的損益 — Group 1</h3><canvas id="chartSymbolsG1"></canvas></div>
-    <div class="chart-box"><h3>📊 各標的損益 — Group 2</h3><canvas id="chartSymbolsG2"></canvas></div>
+    <div class="chart-box"><h3>📊 各標的損益</h3><canvas id="chartSymbolsG1"></canvas></div>
   </div>
 """
 
@@ -695,7 +693,7 @@ def build_html(trades_df: pd.DataFrame) -> str:
     if has_g1:
         html += f"""
   <div class="group-section">
-    <div class="group-label g1">Group 1 固定標的策略</div>
+    <div class="group-label g1">自選股策略明細</div>
     <div class="cards">
       <div class="card"><div class="label">已實現損益</div><div class="value {"positive" if stats_g1['total_pnl'] >= 0 else "negative"}">{v(stats_g1['total_pnl'])}</div></div>
       <div class="card"><div class="label">交易次數</div><div class="value">{stats_g1['total_trades']}</div></div>
@@ -720,7 +718,7 @@ def build_html(trades_df: pd.DataFrame) -> str:
     else:
         html += """
   <div class="group-section">
-    <div class="group-label g1">Group 1 固定標的策略</div>
+    <div class="group-label g1">自選股策略明細</div>
     <div class="empty">📭 尚無交易紀錄</div>
   </div>"""
 
@@ -749,12 +747,6 @@ def build_html(trades_df: pd.DataFrame) -> str:
                 html += f"""<tr><td>{s["symbol"]}</td><td>{s["trades"]}</td><td>{s["buys"]}</td><td>{s["sells"]}</td>
                     <td class="{cls}">{s["pnl"]:+,.0f}</td><td>{s["win_rate"]}%</td></tr>"""
             html += "</tbody></table>"
-    else:
-        html += """
-  <div class="group-section">
-    <div class="group-label g2">Group 2 法人抬轎動能策略</div>
-    <div class="empty">📭 尚無交易紀錄</div>
-  </div>"""
 
     # ─── 策略動畫連結（五策略）───
     STRATEGY_VIDEOS = [
@@ -787,11 +779,8 @@ const DATA = {charts_json};
   if (!canvas || !DATA.labels || !DATA.labels.length) return;
   const ds = [];
   if (DATA.curve_g1 && DATA.curve_g1.some(v => v !== null))
-    ds.push({{ label: 'Group 1', data: DATA.curve_g1, borderColor: '#e74c3c',
-             backgroundColor: 'rgba(231,76,60,.08)', fill: 1, tension: .3, pointRadius: 3 }});
-  if (DATA.curve_g2 && DATA.curve_g2.some(v => v !== null))
-    ds.push({{ label: 'Group 2', data: DATA.curve_g2, borderColor: '#2980b9',
-             backgroundColor: 'rgba(41,128,185,.08)', fill: 2, tension: .3, pointRadius: 3 }});
+    ds.push({{ label: '累積損益', data: DATA.curve_g1, borderColor: '#e74c3c',
+             backgroundColor: 'rgba(231,76,60,.08)', fill: 0, tension: .3, pointRadius: 3 }});
   if (!ds.length) return;
   new Chart(canvas, {{
     type: 'line',
@@ -801,7 +790,7 @@ const DATA = {charts_json};
   }});
 }})();
 
-// ─── Group 1 各標的損益 ───
+// ─── 各標的損益 ───
 (function() {{
   const canvas = document.getElementById('chartSymbolsG1');
   if (!canvas || !DATA.symbol_stats_g1 || !DATA.symbol_stats_g1.length) return;
@@ -815,19 +804,6 @@ const DATA = {charts_json};
   }});
 }})();
 
-// ─── Group 2 各標的損益 ───
-(function() {{
-  const canvas = document.getElementById('chartSymbolsG2');
-  if (!canvas || !DATA.symbol_stats_g2 || !DATA.symbol_stats_g2.length) return;
-  new Chart(canvas, {{
-    type: 'bar',
-    data: {{ labels: DATA.symbol_stats_g2.map(s=>s.symbol),
-            datasets: [{{ label: '損益', data: DATA.symbol_stats_g2.map(s=>s.pnl),
-                         backgroundColor: DATA.symbol_stats_g2.map(s=>s.pnl>=0?'rgba(231,76,60,.7)':'rgba(52,152,219,.7)') }}] }},
-    options: {{ responsive: true, plugins: {{ legend: {{ display: false }} }},
-               scales: {{ y: {{ ticks: {{ callback: v=>v+'元' }} }} }} }}
-  }});
-}})();
 </script>
 </body>
 </html>"""
