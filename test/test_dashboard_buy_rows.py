@@ -228,10 +228,12 @@ class TestRenderedHtml(unittest.TestCase):
 
     def _build(self, rows):
         df = _mk_df(rows)
+        # 2026-10-26 移除 Group 2（法人動能）後不再有 load_group2_json_summary；
+        # 新增的策略欄改由 load_portfolio_strategies() 提供，這裡一併隔離掉。
         with mock.patch.object(gd, "load_holdings", return_value={}), \
              mock.patch.object(gd, "load_stock_allocation", return_value={}), \
              mock.patch.object(gd, "fetch_current_prices", return_value={}), \
-             mock.patch.object(gd, "load_group2_json_summary", return_value={}):
+             mock.patch.object(gd, "load_portfolio_strategies", return_value={}):
             return gd.build_html(df)
 
     def test_buy_row_is_rendered(self):

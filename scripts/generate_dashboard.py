@@ -21,6 +21,11 @@ STOCK_ALLOC_PATH = Path("logs/stock_allocation.json")
 from core.version import APP_VERSION
 CHART_CDN = "https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
 
+# 這支腳本會用 `docker exec` 在容器裡跑，容器啟動時的 .env 可能是舊的
+# → 讀取「策略」欄需要的 PC_ 條目之前，先用 override=True 重讀 .env（見 test_tools_load_env_override）。
+from dotenv import load_dotenv
+load_dotenv(Path(os.getenv("DOTENV_PATH", ".env")), override=True)
+
 
 def load_trades() -> pd.DataFrame:
     if not CSV_PATH.exists():
@@ -79,14 +84,13 @@ def load_holdings() -> dict:
 
 
 def load_portfolio_strategies() -> dict:
-    """從 `.env` 的 `PC_<代號>` 讀 `strategy`（`auto` 會接上已鎖定的策略）。
+    """從 `PC_<代號>` 讀 `strategy`（`auto` 會接上已鎖定的策略）。
 
     例：`keep_wait`、`ma_cross`、`auto→bollinger`（`logs/auto_resolved.json` 有鎖定值時）。
     讀不到 `.env` 或該檔不在名單 → 顯示 `-`（例如手動買進、不在 PC_ 名單的部位）。
+
+    `.env` 已在 import 時用 `load_dotenv(override=True)` 重讀，這裡直接看 `os.environ`。
     """
-    env_path = Path(os.getenv("DOTENV_PATH", ".env"))
-    if not env_path.exists():
-        return {}
     locked = {}
     try:
         lf = Path("logs/auto_resolved.json")
@@ -95,15 +99,14 @@ def load_portfolio_strategies() -> dict:
     except Exception:
         locked = {}
     out = {}
-    for line in env_path.read_text(encoding="utf-8").splitlines():
-        t = line.strip()
-        if not t.startswith("PC_") or "=" not in t:
+    for key, val in os.environ.items():
+        if not key.startswith("PC_"):
             continue
-        sym, val = t[3:].split("=", 1)
-        sym = sym.strip()
-        val = val.split("#", 1)[0].strip()
+        sym = key[3:].strip()
+        if not sym:
+            continue
         try:
-            cfg = json.loads(val)
+            cfg = json.loads(str(val).split("#", 1)[0].strip())
         except Exception:
             continue
         st = str(cfg.get("strategy", "?")).strip() or "?"
@@ -710,7 +713,7 @@ def build_html(trades_df: pd.DataFrame) -> str:
 
     html += f"""
   <div class="strategy-section">
-    <div class="section-title">🎬 六策略動畫說明</div>
+    <div class="section-title">🎬 策略動畫說明</div>
     <div class="strategy-links">
       {video_links}
     </div>

@@ -64,6 +64,27 @@ def start_watchdog():
         os._exit(1)
   threading.Thread(target=_wd, daemon=True).start()
   print(f'🐕 watchdog 已啟動（> {_STALL_EXIT_SEC:.0f}s 無進展則重啟）')
+def keep_wait_tier_hit(tiers, fired, px, profit_pct):
+  """keep_wait 分層停利：回傳 (index, tier) 或 None。
+
+  `tp_tiers` 每一層支援兩種寫法（可混用，依陣列順序檢查、先符合者先觸發）：
+    {"pct": 15, "ratio": 50}    → 相對均價漲幅 ≥ 15% 觸發
+    {"price": 280, "ratio": 50} → 現價 ≥ 280 觸發（絕對價位，2026-10 新增）
+  ratio 為該層賣出比例（最後一層＝全數出清）；缺省 ratio=50、pct=15。
+  """
+  for idx, tier in enumerate(tiers or []):
+    if not isinstance(tier, dict) or (idx in fired):
+      continue
+    try:
+      if 'price' in tier:
+        if px >= float(tier['price']):
+          return idx, tier
+      elif profit_pct >= float(tier.get('pct', 15)):
+        return idx, tier
+    except (TypeError, ValueError):
+      continue
+  return None
+
 from core.live_broker import create_broker as _create_broker
 from core.live_capital import read_capital_file, check_capital_injections as _check_capital_injections, execute_keep_wait_on_profit_roll as _execute_keep_wait_on_profit_roll
 STRATEGY_FUNCS = {'vwap': vwap_deviation_strategy, 'ma_cross': ma_cross_strategy, 'bollinger': bollinger_reverse_strategy, 'breakout': breakout_strategy, 'keep_wait': keep_wait_strategy, 'auto': auto_sensing_strategy}
@@ -677,16 +698,9 @@ def main():
               profit_pct = (((px - avg_cost) / avg_cost) * 100)
               take_profit = False
               if kw_tp_tiers and isinstance(kw_tp_tiers, list) and len(kw_tp_tiers) > 0:
-                # ── 多層停利 (tp_tiers) ──
+                # ── 多層停利 (tp_tiers)：每層可寫 pct（相對均價 %）或 price（絕對價位）──
                 fired_tiers = trk.setdefault('tp_tiers_fired', [])
-                tier_triggered = None
-                for tier_idx, tier in enumerate(kw_tp_tiers):
-                  if tier_idx in fired_tiers:
-                    continue
-                  tier_pct = float(tier.get('pct', 15))
-                  if profit_pct >= tier_pct:
-                    tier_triggered = (tier_idx, tier)
-                    break
+                tier_triggered = keep_wait_tier_hit(kw_tp_tiers, fired_tiers, px, profit_pct)
                 if (tier_triggered is not None) and (trk['total_shares'] > 0):
                   owned = holdings.get(symbol, 0)
                   tier_idx, tier = tier_triggered
@@ -698,7 +712,11 @@ def main():
                     position_size = sell_qty
                     fired_tiers.append(tier_idx)
                     take_profit = True
-                    print(f'📈 {symbol} 停利 T{tier_idx+1}: +{profit_pct:.1f}% >= +{tier["pct"]}% 賣出 {sell_qty}/{owned} 股 ({tier["ratio"]}%)')
+                    if 'price' in tier:
+                      _why = f'現價 {px:.1f} >= {float(tier["price"]):.1f}'
+                    else:
+                      _why = f'+{profit_pct:.1f}% >= +{float(tier.get("pct", 15)):.1f}%'
+                    print(f'📈 {symbol} 停利 T{tier_idx+1}: {_why} 賣出 {sell_qty}/{owned} 股 ({tier.get("ratio", 50)}%)')
                     if is_last:
                       trk['buy_count'] = (- 1)
                       trk['sold_date'] = datetime.now()
