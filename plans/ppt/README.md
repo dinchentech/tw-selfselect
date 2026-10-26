@@ -53,7 +53,15 @@ W4/W6 以 LibreOffice 轉 PDF 抽頁目視確認版面正常（頁碼是自動�
 - W5 的 s16、s17：截圖內容（計畫表／測試輸出）保留，只**裁掉底部狀態列**（原本寫著 Prometheus Plan Builder／Sisyphus Ultraworker）。
 - 其餘截圖（PyCharm、VS Code、圖表、儀表板）與 AI 品牌無關，維持原樣。
 
-### 仍待處理（母檔沿用、尚未改）
-- W2 的部署章節仍寫舊流程（`deploy_crypted.sh`／pyarmor／`tw-autotrader:latest`）；
-  本專案實際是 `./deploy_source.sh`＋`tw-selfselect:latest`。
-- GCP VM 名稱 `tw-autotrader` 保留（實機沒改名）；GitHub 連結也維持母專案網址。
+## 部署章節改寫（2026-10-26 第二輪）
+
+W2 的部署章節（s11–s17）與 W6 的部署頁（s2、s13）改成實際流程：
+
+| 頁面 | 變更 |
+|---|---|
+| W2 s11–s13 | 三層架構圖重畫：Local（`~/tw-selfselect`，whl 進 git、p12／ini 不進）→ `./deploy_source.sh`（preflight → build → SSH 直傳）→ VM `~/tw-selfselect`（舊 `~/tw-autotrader` 保留可回滾）→ 容器 `tw_selfselect_bot` |
+| W2 s14–s16 | 三層關係、容器執行層、修改流程：拿掉 pyarmor／加密版／源碼版兩種腳本；改成 `./deploy_source.sh`（含驗指紋）與 `logs/backups/cache/.env` 四掛載 |
+| W2 s17 | 指令速查：`./deploy_source.sh`、`docker compose down/up`、`docker logs tw_selfselect_bot`、`gcloud compute ssh tw-autotrader` |
+| W6 s2（講稿）、s13 | 第五步部署改成 `./deploy_source.sh`；s13 的舊 `deploy_user.sh` 截圖移除，留「實際輸出截圖待補」 |
+
+仍保留的母專案痕跡（刻意的）：GCP VM 實例名稱仍為 `tw-autotrader`、GitHub 連結指向母專案。
