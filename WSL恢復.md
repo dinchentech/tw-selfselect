@@ -20,7 +20,7 @@ mv ~/tw-selfselect/esun_sdk/*.p12 /mnt/c/Users/frank/Documents/tw_selfselect_bac
 mv ~/tw-selfselect/esun_sdk/*.example /mnt/c/Users/frank/Documents/tw_selfselect_backup/
 mv ~/tw-selfselect/esun_sdk/*.ini /mnt/c/Users/frank/Documents/tw_selfselect_backup/
 
-# 2. 移 .env（含玉山密碼、Telegram Token、FinMind Token）live_trader_multi.py
+# 2. 移 .env（含玉山密碼、Telegram Token、FinMind Token）
 mv ~/tw-selfselect/.env /mnt/c/Users/frank/Documents/tw_selfselect_backup/
 
 # 3. 移 DSH（DeepSeek Harness）API Key 憑證（沒有 key 就打不了任何 LLM API）
