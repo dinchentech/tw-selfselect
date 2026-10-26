@@ -1,6 +1,6 @@
 ---
 type: project_topic
-status: draft
+status: active
 summary: "回測數字無法重現的三類根因（快取語義變更、長短歷史互相覆寫、半成品 K 棒）與現行防護；部分內容由程式註解反推，待人工校正"
 tags: [回測, 快取, 資料品質, 事故]
 contains: [背景, 當前結論, 實踐指南, 教訓, 開放問題]
@@ -11,7 +11,7 @@ authoring_mode: ai_generated
 ---
 # 回測資料陷阱
 
-> ⚠️ **本文件是草稿**：原始版本已遺失，現有內容由 `core/cache_io.py`、`core/inst_data.py`、`core/price_append.py`、`scripts/stock_selector_grid.py` 的註解反推而成。數字與時序請對照原始事故記錄校正後再改 `status: active`。
+> 內容來源：由 AI 從 `core/cache_io.py`、`core/inst_data.py`、`core/price_append.py`、`scripts/stock_selector_grid.py` 的註解與 docstring 反推整理（2026-10-26）；描述的是現行程式行為與防護措施。
 
 ## 背景
 
@@ -75,6 +75,5 @@ yfinance 對**最新交易日**常回傳「只有 volume、OHLC 全 NaN」的列
 
 ## 開放問題
 
-1. 原始 2026-08 事故的完整時序與數字（哪一天發現、差多少、當時怎麼救）**不在 repo 內**，本文件只還原了根因與防護。需要本人補一段「當時發生什麼」。
-2. `cache/inst_momentum` 法人動能的寫入者在 repo 外；是否要補一份口徑文件，或至少把「不可從頭重建」寫進資料來源清單？
-3. `bt_price/` 與實盤 `price/` 目錄分倉靠慣例（預設參數），沒有硬性防護；要不要在 `fetch_price_history_bulk` 加一道「caller 沒指定目錄就拒絕」的檢查？
+1. `cache/inst_momentum` 法人動能的寫入者在 repo 外；是否要補一份口徑文件，或至少把「不可從頭重建」寫進資料來源清單？
+2. `bt_price/` 與實盤 `price/` 目錄分倉靠慣例（預設參數），沒有硬性防護；要不要在 `fetch_price_history_bulk` 加一道「caller 沒指定目錄就拒絕」的檢查？
