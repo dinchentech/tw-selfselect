@@ -424,17 +424,26 @@ def _trading_days_between(a: str, b: str) -> int:
 
 
 def push_env_to_vm(env_path, vm: str = "tw-autotrader", zone: str = "asia-east1-b", runner=None):
-    """scp `.env` 到 VM，再比對遠端 md5 → `(ok, msg, local_md5, remote_md5)`（只上傳，不部署程式）。"""
+    """scp `.env` 到 VM 的**專案目錄**（`SYNC_VM_HOME/.env`），再比對遠端 md5。
+
+    回傳 `(ok, msg, local_md5, remote_md5)`（只上傳 `.env`，不部署程式）。
+
+    ⚠️ 2026-10-26 修 bug：原本寫 `f"{vm}:~/{env_path}"`，`env_path` 是相對路徑 `.env`
+    ⇒ 實際上傳到 VM 家目錄 `~/.env`，容器（掛載 `./.env`）根本讀不到，還會在 VM 家目錄
+    留下一個孤兒檔案。現在改用 `.env` 的 `SYNC_VM_HOME`（預設 `~/tw-selfselect`）組遠端路徑。
+    """
     runner = runner or subprocess.run
     local = env_md5(env_path)
-    r = runner(["gcloud", "compute", "scp", str(env_path), f"{vm}:~/{env_path}",
+    remote_dir = (os.getenv("SYNC_VM_HOME", "~/tw-selfselect") or "~/tw-selfselect").rstrip("/")
+    remote_env = f"{remote_dir}/.env"
+    r = runner(["gcloud", "compute", "scp", str(env_path), f"{vm}:{remote_env}",
                 "--zone", zone, "--quiet"], capture_output=True, text=True)
     if r.returncode != 0:
         return False, f"scp 失敗：{(r.stderr or '')[:300]}", local, None
     remote = None
     try:
         r2 = runner(["gcloud", "compute", "ssh", vm, "--zone", zone, "--quiet", "--command",
-                     f"md5sum ~/{env_path}"], capture_output=True, text=True)
+                     f"md5sum {remote_env}"], capture_output=True, text=True)
         if r2.returncode == 0 and (r2.stdout or "").strip():
             remote = r2.stdout.split()[0]
     except Exception:

@@ -53,6 +53,12 @@ LAST_PICK_FILE = os.getenv("MONTHLY_PICK_FILE", os.path.join("logs", "monthly_pi
 # ── 載入誠實池與價量 ─────────────────────────────────────
 def load_data(pool_n):
     hist, _ = load_cache_or_raw("cache/inst_momentum/historical_shares.pkl")
+    if not hist:
+        sys.exit("❌ 找不到 cache/inst_momentum/historical_shares.pkl ⇒ 沒有誠實候選池可用。\n"
+                 "   · 本機流程：先把 VM 的 cache 同步回來（alias `VM_sync_cache`，或\n"
+                 "     `gcloud compute ssh tw-autotrader --zone=asia-east1-b --command='cd ~/tw-selfselect && tar czf - cache' | tar xzf - -C .`）\n"
+                 "   · 或在建立這份 cache：`python scripts/build_historical_shares.py`（需 FinMind 額度）\n"
+                 "   · 詳見使用手冊 §3-0「第一次執行」。")
     union = sorted({k[0] for k in hist})
     data = {}
     for sid in union:
