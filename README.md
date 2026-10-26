@@ -124,4 +124,5 @@ docker compose logs -f         # 看主迴圈
 - 允許個人學習／研究／學術使用，以及在不涉及商業利益前提下修改與分享（須保留授權聲明）。
 - 第三方套件、SDK 與資料來源（FinMind、玉山 SDK、TWSE 等）不在本授權範圍，請遵守其各自條款。
 - 完整條文：[LICENSE](LICENSE)
+- **商業使用／授權洽詢**：`frank@dinchen.com.tw`（主旨請註明「TW SelfSelect 商業授權」）。
 - 備註：本專案早期版本曾以 MIT 授權發布；已依 MIT 取得的副本仍受 MIT 條款保護，無法追溯撤銷。
