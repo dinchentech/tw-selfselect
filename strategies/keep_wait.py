@@ -11,7 +11,7 @@ Keep & Wait Strategy — function-based version
   - add_drop_pct: 加碼門檻 - 從平均成本下跌此百分比時加碼 (預設 5%)
   - add_shares: 每次加碼股數 (預設 6)
   - max_additions: 最多加碼次數 (預設 2)
-  - tp_pct: 停利門檻 - 獲利達此百分比時停利 (預設 15%)
+  - tp_trigger_pct: 停利門檻 - 獲利達此百分比時停利 (預設 15%；實盤讀這個鍵，舊文件誤寫成 tp_pct)
   - tp_sell_ratio: 停利時賣出比例 (預設 50%)
   - cooldown_days: 停利後冷卻天數 (預設 30)
 """

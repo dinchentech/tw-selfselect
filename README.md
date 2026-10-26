@@ -3,7 +3,7 @@
 > 每月自動選股、自動換股、自動下單的台股交易機器人。
 > 由 [tw-autotrader](https://github.com/dinchentech/tw-autotrader) 拆出，**只有一條資金腿：每月換股的自選股**。
 
-📖 **[使用手冊](使用手冊.md)** — 安裝、參數、每月作業、真錢上線檢查清單
+📖 **[使用手冊](使用手冊.md)** — 安裝、參數、每月作業、真錢上線檢查清單　·　📊 **[策略說明](策略說明.md)** — 策略原理、選股口徑、風控、參數總表
 
 ---
 
@@ -52,7 +52,7 @@ data/
 strategies/                策略函式（auto 型態分派 / ma_cross / bollinger / vwap / breakout / keep_wait）
 scripts/
   monthly_selfselect_run.py   每月作業一條指令（補資料 → 選股 → 改 .env → 可選同步到 VM）
-  monthly_rebalance_picker.py 選股引擎（三種風險組、法人確認、過熱剔除）
+  monthly_rebalance_picker.py 選股引擎（兩種風險組 normal／high_profit、法人確認、過熱剔除）
   stock_selector_grid.py      選股共用函式庫（資料載入／特徵／評分）
   backtest_plan2_monthly_3group.py  每月換股策略回測（含交易成本、誠實池）
 test/                      單元測試（unittest）
