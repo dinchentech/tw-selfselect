@@ -8,7 +8,8 @@
 - 做法：新增 `scripts/vm/publish_dashboard.sh` + `install_dashboard_publish.sh`；VM 上另建只取 `docs/` 的 sparse clone `~/dash-publish`（部署目錄沒有 `.git`，不能直接 commit）。
 - 排程：台北 13:50、週一至五（cron UTC `50 5 * * 1-5`）——13:45 產生、14:00 關機，13:50 是唯一安全窗。
 - 狀態：腳本已安裝到 VM，但**尚未設 token** ⇒ 安裝器刻意不加 cron（避免每天空跑）。缺 `~/.dash-publish-token`（fine-grained PAT，Contents: Read and write）。
-- ⚠️ 決策：使用者選「完整公開，不加限制」⇒ 持股股數／成本／總資產會公開。切 `ESUN_ENVIRONMENT=real` 前必須回頭改。
+- 開關：`.env` 的 `DASHBOARD_PUBLISH`（預設 `0`＝不公開，`1`＝公開）。使用者選「完整公開」，本機與 VM 的 `.env` 均已設 `1`；腳本每次重讀 `.env`，關掉下一輪就跳過。
+- ⚠️ 公開的是完整儀表板（股數／成本／總資產）⇒ 切 `ESUN_ENVIRONMENT=real` 前必須改回 `0`。
 - 指標：`cairn/deploy-pipeline.md` §儀表板自動發佈、`scripts/vm/*dash*`。
 
 ## 2026-10-27 · VM 守門員納入版控 + 補 deploy-pipeline 知識檔

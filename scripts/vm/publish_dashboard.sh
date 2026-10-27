@@ -14,7 +14,8 @@
 #    所以另外用一個**只取 docs/ 的 sparse clone**（~ /dash-publish）當發佈工作區，
 #    每次執行都 reset 到 origin/main 再覆蓋檔案、commit、push。
 #
-# ⚠️ 公開性（刻意接受，2026-10-27 決定）：完整儀表板含持股股數、平均成本、總資產，
+# ⚠️ 公開性：**要不要公開由使用者決定**，開關是 `.env` 的 `DASHBOARD_PUBLISH`
+#    （預設 0＝不公開；設 1 才會推）。完整儀表板含持股股數、平均成本、總資產，
 #    推到公開 Pages ⇒ 全世界可見。模擬帳無妨，**切 ESUN_ENVIRONMENT=real 前要重新評估**。
 #
 # 憑證：~/ .dash-publish-token（chmod 600）內放 fine-grained PAT
@@ -48,6 +49,18 @@ notify() {   # 只在失敗時吵人（成功不發，避免每天一則）
 fail() { say "❌ $*"; notify "⚠️ TW SelfSelect 儀表板發佈失敗：$*"; exit 1; }
 
 # ── 前置檢查 ─────────────────────────────────────────────────────────
+# 總開關 `DASHBOARD_PUBLISH`（預設 0＝不公開）。公開與否是使用者的決定，
+# 不該因為裝了 cron 就默默把持股與總資產推上網。
+PUBLISH="${DASHBOARD_PUBLISH:-}"
+if [ -z "$PUBLISH" ] && [ -f "$ENV_FILE" ]; then
+  PUBLISH=$(grep -E '^DASHBOARD_PUBLISH=' "$ENV_FILE" | head -1 | cut -d= -f2- | tr -d '"' | tr -d ' ')
+  PUBLISH="${PUBLISH%%#*}"; PUBLISH=$(echo "$PUBLISH" | tr -d ' ')
+fi
+case "${PUBLISH:-0}" in
+  1|true|TRUE|on|ON|yes|YES) ;;
+  *) say "⏭ DASHBOARD_PUBLISH=${PUBLISH:-未設定}（需為 1）⇒ 依設定不公開儀表板"; exit 0 ;;
+esac
+
 [ -f "$TOKEN_FILE" ] || { say "⏭ 沒有 $TOKEN_FILE（尚未設定 token）⇒ 跳過"; exit 0; }
 TOKEN=$(tr -d ' \r\n' < "$TOKEN_FILE")
 [ -n "$TOKEN" ] || { say "⏭ token 檔為空 ⇒ 跳過"; exit 0; }

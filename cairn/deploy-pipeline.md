@@ -80,7 +80,11 @@ sudo tail -3 /var/log/tw_watchdog.log /var/log/tw_restart_guard.log
 - 安裝：`./scripts/vm/install_dashboard_publish.sh`（沒 token 就只裝腳本、不加 cron）／`VERIFY_ONLY=1` 檢查。
 - 失敗會發 Telegram（成功不發，避免每天一則）；log 在 `~/tw-selfselect/logs/publish_dashboard.log`。
 
-> ⚠️ **公開性：刻意接受（2026-10-27 使用者決定）**。完整儀表板含持股股數、平均成本、總資產，推到公開 Pages 即全世界可見。目前 `ESUN_ENVIRONMENT=simulation`（假錢）無妨；**切 `real` 前必須重新評估**（可改發脫敏版或停掉 cron）。
+> **要不要公開由使用者決定**：`.env` 的 `DASHBOARD_PUBLISH`（預設 `0`＝不公開；`1` 才推）。
+> 腳本每次執行都重讀 `.env`，改完下一個排程即生效，不用重啟。設定步驟見 `使用手冊.md` §5-3。
+
+> ⚠️ **公開的是完整儀表板**：持股股數、平均成本、總資產都會上網、可能被搜尋引擎索引。
+> 目前 `ESUN_ENVIRONMENT=simulation`（假錢）無妨；**切 `real` 前必須改回 `0`**（或自行改成脫敏版）。
 
 ## 實踐指南
 
