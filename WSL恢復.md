@@ -34,6 +34,8 @@ history -c && history -w
 cp -a ~/.ssh /mnt/c/Users/frank/Documents/tw_selfselect_backup/
 # 刪原件
 rm -rf ~/.ssh
+# ⚠️ Windows 的 NTFS 存不住 unix 權限：這裡雖然用 cp -a，還原後權限仍會變成 0644
+#    ⇒ 還原時「複製」與「chmod」必須同一輪做完（見「還原後第一次設定」步驟 6）
 
 # 6. 移 .bashrc
 mv ~/.bashrc /mnt/c/Users/frank/Documents/tw_selfselect_backup/
@@ -128,7 +130,20 @@ ls ~/.dsh/.credentials.yaml
 
 # 5. 還原 .bashrc（本專案主程式為公開源碼，沒有加密檔）
 cp ~/.bashrc.txt  ~/.bashrc
+
+# 6. 還原 ~/.ssh（用備份 WSL 才有；買家全新環境請跳過，往下看「修正金鑰權限」）
+#    ⚠️ 從 Windows 複製回來的權限一定是 0644／0755，複製完**同一輪**就要修好，
+#       否則 OpenSSH 會直接拒用私鑰（症狀：Permission denied (publickey)）
+cp -a /mnt/c/Users/frank/Documents/tw_selfselect_backup/.ssh ~/
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/*
+chmod 644 ~/.ssh/*.pub ~/.ssh/known_hosts ~/.ssh/google_compute_known_hosts
+stat -c '%a %n' ~/.ssh ~/.ssh/google_compute_engine ~/.ssh/google_compute_engine.pub
+# 預期：700 /home/frank/.ssh、600 .../google_compute_engine、644 .../google_compute_engine.pub
+ssh-keygen -y -f ~/.ssh/google_compute_engine >/dev/null && echo "金鑰 OK"
 ```
+
+> 只要「`stat` 三行不是 700／600／644」，就回去重跑 `chmod` 那三行。這一步沒過，後面 `gcloud compute ssh` 一定失敗，而且錯誤訊息會騙你說 VM 沒掛公鑰。
 
 進去後確認：
 
@@ -149,7 +164,9 @@ ls ~/tw-selfselect/esun_sdk/*.p12
 
 ### 還原 `~/.ssh` 之後必做：修正金鑰權限
 
-從 Windows（`/mnt/c/...`）把 `~/.ssh` 複製回 WSL，權限會變成 `0644`／目錄 `0755`。
+> 已納入上方「還原後第一次設定」**步驟 6**；本節是為什麼會這樣、以及已經踩到時怎麼救。
+
+從 Windows（`/mnt/c/...`）把 `~/.ssh` 複製回 WSL，權限會變成 `0644`／目錄 `0755`——NTFS 存不住 unix mode，`cp -a` 也救不回來。
 OpenSSH 看到私鑰「同組或其他使用者可讀」就會**直接拒用**，看起來卻像「VM 沒掛公鑰」：
 
 ```
