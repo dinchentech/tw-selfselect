@@ -29,6 +29,13 @@ TMP/
 *.patch
 *:Zone.Identifier
 
+# ── 教材／投影片（2026-10-27 加）────────────────────────────────────
+# `COPY . .` 會把整個 repo 帶進 image：plans/ 就佔 74MB（pptx／mp4／配音稿），
+# 而執行期程式完全沒引用它（grep 0 筆）。排除後 build context 從 87MB → 約 14MB，
+# 順帶讓「改到一半的 pptx」不會被打包進 image、也不會觸發部署前的未提交變更警告。
+plans/
+docs/
+
 # ── 刻意「不」排除 esun_sdk/ ────────────────────────────────────────
 # Dockerfile 要 `pip install esun_sdk/*.whl`，而且執行期需要
 # esun_sdk/config.simulation.ini（券商帳號／API key）與 .p12 憑證。
