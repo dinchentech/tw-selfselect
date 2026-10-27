@@ -2,6 +2,15 @@
 
 本檔以倒序記錄實質推進（最新在最上面，緊接這行之下）。每則保持精簡——只寫摘要與指標，結論沉澱到 `cairn/<主題>.md`。
 
+## 2026-10-27 · 儀表板自動發佈到 GitHub Pages（等 token）
+
+- 需求：公開頁只認 `docs/index.html`，而 `pages.yml` 只在「push 到 main 且改到 docs/」時部署；儀表板 13:45 才產生 ⇒ 中間沒有橋，頁面一直停在手動更新那天。
+- 做法：新增 `scripts/vm/publish_dashboard.sh` + `install_dashboard_publish.sh`；VM 上另建只取 `docs/` 的 sparse clone `~/dash-publish`（部署目錄沒有 `.git`，不能直接 commit）。
+- 排程：台北 13:50、週一至五（cron UTC `50 5 * * 1-5`）——13:45 產生、14:00 關機，13:50 是唯一安全窗。
+- 狀態：腳本已安裝到 VM，但**尚未設 token** ⇒ 安裝器刻意不加 cron（避免每天空跑）。缺 `~/.dash-publish-token`（fine-grained PAT，Contents: Read and write）。
+- ⚠️ 決策：使用者選「完整公開，不加限制」⇒ 持股股數／成本／總資產會公開。切 `ESUN_ENVIRONMENT=real` 前必須回頭改。
+- 指標：`cairn/deploy-pipeline.md` §儀表板自動發佈、`scripts/vm/*dash*`。
+
 ## 2026-10-27 · VM 守門員納入版控 + 補 deploy-pipeline 知識檔
 
 - 把原本只存在 VM `/usr/local/bin` 的三支腳本收進 repo：`scripts/vm/tw_watchdog.sh`、`tw_restart_guard.sh`、`auto_shutdown.sh`。

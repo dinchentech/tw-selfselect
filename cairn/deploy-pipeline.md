@@ -62,6 +62,26 @@ sudo DRY_RUN=1 GUARD_ALERT_ONLY=1 /usr/local/bin/tw_restart_guard.sh
 sudo tail -3 /var/log/tw_watchdog.log /var/log/tw_restart_guard.log
 ```
 
+## 儀表板自動發佈（2026-10-27 新增）
+
+公開頁 <https://dinchentech.github.io/tw-selfselect/> 只認 repo 的 `docs/index.html`，而 `.github/workflows/pages.yml` 只在 **push 到 main 且改到 `docs/`** 時才部署。儀表板本身由 `selfselect_trader.py` 在**台北 13:45**（`m >= 45` + `report_due('daily_report')`）產生到 `logs/dashboard.html`，兩者之間的橋就是：
+
+```
+13:45  容器產生 logs/dashboard.html
+13:50  /usr/local/bin/publish_dashboard.sh（/etc/cron.d/publish_dashboard，週一至五）
+         ├ fetch origin/main → reset --hard（工作區是拋棄式的）
+         ├ cp logs/dashboard.html → ~/dash-publish/docs/index.html
+         └ commit + push → pages.yml 觸發 → 1–2 分鐘後上線
+14:00  VM 由 GCP 排程關機（所以 13:50 是唯一安全窗）
+```
+
+- **VM 的 `~/tw-selfselect` 沒有 `.git`**（`deploy_source.sh` 是 scp 上傳），所以另建一個只取 `docs/` 的 sparse clone `~/dash-publish` 當發佈工作區；不要對部署目錄跑 `git init`，會與 scp 上傳打架。
+- **憑證**：`~/.dash-publish-token`（600）放 fine-grained PAT（只授本 repo、Contents: Read and write）。腳本用 `http.extraheader` 傳 Authorization，**不把 token 寫進 remote URL／`.git/config`**。
+- 安裝：`./scripts/vm/install_dashboard_publish.sh`（沒 token 就只裝腳本、不加 cron）／`VERIFY_ONLY=1` 檢查。
+- 失敗會發 Telegram（成功不發，避免每天一則）；log 在 `~/tw-selfselect/logs/publish_dashboard.log`。
+
+> ⚠️ **公開性：刻意接受（2026-10-27 使用者決定）**。完整儀表板含持股股數、平均成本、總資產，推到公開 Pages 即全世界可見。目前 `ESUN_ENVIRONMENT=simulation`（假錢）無妨；**切 `real` 前必須重新評估**（可改發脫敏版或停掉 cron）。
+
 ## 實踐指南
 
 - **部署時順帶同步守門員**：`INSTALL_GUARDS=1 ./deploy_source.sh`（預設不做，避免部署腳本動 root 設定與 cron）。單獨更新用 `./scripts/vm/install_vm_guards.sh`。
