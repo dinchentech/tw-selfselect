@@ -2,6 +2,14 @@
 
 本檔以倒序記錄實質推進（最新在最上面，緊接這行之下）。每則保持精簡——只寫摘要與指標，結論沉澱到 `cairn/<主題>.md`。
 
+## 2026-10-27 · `~/.ssh` 權限又被打回 0644，修好並驗證
+
+- 症狀：`gcloud compute ssh tw-autotrader` 失敗，OpenSSH 拒用 `google_compute_engine`（0644 too open）→ `Permission denied (publickey)`。
+- 處置：`chmod 700 ~/.ssh`、`chmod 600 ~/.ssh/*`，公鑰與 `known_hosts` 設回 644；`ssh-keygen -y` 驗兩把私鑰皆可讀。
+- 驗證：直連 `frank@35.194.221.238` 與 `gcloud compute ssh tw-autotrader --zone=asia-east1-b` 都回 OK（`hostname` = tw-autotrader）。
+- 觀察：`~/.ssh` 目錄 mtime 是同日 00:07 ⇒ 金鑰疑似又從 Windows 還原過一次；修法見 `WSL恢復.md` §「還原 `~/.ssh` 之後必做：修正金鑰權限」。
+- 指標：這是同一坑第二次踩（第一次已寫進 `WSL恢復.md`）；若再發生，值得查是什麼在還原金鑰。
+
 ## 2026-10-26 · 收斂開放問題、校正 W3 教材腳本
 
 - 依指示刪除兩則開放問題：`backtest-data-pitfalls.md` 的「待補原始時序」、`total-assets-reconciliation.md` 的「92,484 / 93,048 數字差」。
