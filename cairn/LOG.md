@@ -2,6 +2,17 @@
 
 本檔以倒序記錄實質推進（最新在最上面，緊接這行之下）。每則保持精簡——只寫摘要與指標，結論沉澱到 `cairn/<主題>.md`。
 
+## 2026-10-27 · 雲端 watchdog 綁著母專案容器名，天天假告警（已修）
+
+- 症狀：Telegram `⚠️ TW AutoTrader 容器未運行，已自動重啟（watchdog）` 每 5 分鐘一則；10-26 觸發 **115 次**、10-27 到 11:15 已 **38 次**。
+- 根因：VM 上 `/usr/local/bin/tw_watchdog.sh`（root cron `*/5`）檢查 `CONTAINER_NAME="tw_autotrader_bot"`、讀 `~/tw-autotrader/.env`——那是拆出 tw-selfselect **之前**的雲端部署名；現在的容器是 `tw_selfselect_bot` ⇒ 每輪都判「未運行」，`docker start` 失敗（`No such container`）後照樣發通知。
+- 連帶風險：該腳本的行為是「沒跑就 `docker start`」。若日後回滾或手動建了 `tw_autotrader_bot`，它會**主動拉起母專案 bot 跟 selfselect 搶同一個玉山帳號**（`使用手冊 §部署`：同一券商帳號不能兩隻 bot 同時下單）。
+- 同時發現 `/usr/local/bin/tw_restart_guard.sh`（2026-10-02 崩潰迴圈事故後加的守門員）也綁舊容器名 ⇒ 一直在「略過」，**真正的保護是失效的**。
+- 處置（VM 上，均已備份 `*.bak-20261027`）：兩支腳本改指 `tw_selfselect_bot`／`~/tw-selfselect/.env`、訊息改 `TW SelfSelect`、重複實例比對 `live_trader_multi.py` → `selfselect_trader.py`、移除硬編的 Telegram token fallback（讀不到只寫 log）。
+- 驗證：手動跑 watchdog → 容器在跑 ⇒ 不發通知；restart_guard `DRY_RUN=1 GUARD_ALERT_ONLY=1` → 正確讀到 `StartedAt` 並計次。
+- 指標：`/var/log/tw_watchdog.log`、`/var/log/tw_restart_guard.log`；腳本不在 repo 內（只在 VM），待納入版控。
+- 附註：11:11:39 CST 有人寫入 VM 的 `docker-compose.yml`、11:13:22 容器被**重建**（`Created` 變、log 重置、`RestartCount=0`，image 未重建）。內容與 repo 一致，疑為手動 `deploy_source.sh`。
+
 ## 2026-10-27 · `~/.ssh` 權限又被打回 0644，修好並驗證
 
 - 症狀：`gcloud compute ssh tw-autotrader` 失敗，OpenSSH 拒用 `google_compute_engine`（0644 too open）→ `Permission denied (publickey)`。
