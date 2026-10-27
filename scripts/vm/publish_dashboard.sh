@@ -102,10 +102,12 @@ if [ "$DRY_RUN" = "1" ]; then
   exit 0
 fi
 
-TZ=Asia/Taipei git commit -q -m "儀表板：自動發佈 ${SRC_DATE} 資料
+NOW_HM=$(TZ=Asia/Taipei date '+%H:%M')
+TZ=Asia/Taipei git commit -q -F - >>"$LOG" 2>&1 <<MSG || fail "commit 失敗"
+儀表板：自動發佈 ${SRC_DATE} 資料
 
-由 VM 的 publish_dashboard.sh 於台北 ${TZ=Asia/Taipei date '+%H:%M'} 產生後推送。" >>"$LOG" 2>&1 \
-  || fail "commit 失敗"
+由 VM 的 publish_dashboard.sh 於台北 ${NOW_HM} 產生後推送。
+MSG
 
 if git -c http.extraheader="$AUTH_HEADER" push origin "HEAD:${BRANCH}" >>"$LOG" 2>&1; then
   say "✅ 已發佈 ${SRC_DATE} 儀表板（$(git rev-parse --short HEAD)）"
