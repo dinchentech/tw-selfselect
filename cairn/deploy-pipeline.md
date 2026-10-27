@@ -64,6 +64,7 @@ sudo tail -3 /var/log/tw_watchdog.log /var/log/tw_restart_guard.log
 
 ## 實踐指南
 
+- **部署時順帶同步守門員**：`INSTALL_GUARDS=1 ./deploy_source.sh`（預設不做，避免部署腳本動 root 設定與 cron）。單獨更新用 `./scripts/vm/install_vm_guards.sh`。
 - **改容器名／目錄名時**，同時檢查這四處：`docker-compose.yml`、`deploy_source.sh` 的 `CONTAINER`／`OLD_CONTAINER`、`scripts/vm/tw_watchdog.sh` 的 `CONTAINER_NAME`／`ENV_FILE`／`pgrep` 目標、`scripts/vm/tw_restart_guard.sh` 的 `GUARD_CONTAINER`／`STATE`／`ENV_FILE`。
 - **盤中不要部署**：`--force-recreate` 會讓 bot 重新初始化 5 檔並中斷當前判斷。收盤後（13:30 之後）或 08:00 開機前做。
 - **回滾**：`gcloud compute ssh tw-autotrader --zone=asia-east1-b --command='cd ~/tw-autotrader && sudo docker compose up -d'`——但務必先把 `tw_selfselect_bot` 停掉，同帳號不能兩隻 bot。
@@ -77,6 +78,6 @@ sudo tail -3 /var/log/tw_watchdog.log /var/log/tw_restart_guard.log
 
 ## 開放問題
 
-1. `deploy_source.sh` 目前**不會**順帶更新守門員（要另跑 `install_vm_guards.sh`）。要不要加 `INSTALL_GUARDS=1` 讓部署一併帶上？
-2. `/etc/cron.d` 的註解原本寫「由 `scripts/vm_set_auto_shutdown_cron.sh` 產生」，但那個腳本在 git 與 VM 都查無此物（從未進版控）——已改指向 `scripts/vm/install_vm_guards.sh`。
-3. `tw_watchdog.sh` 的 `pgrep -f selfselect_trader.py` 仍可能誤中未來新增的同名工具；目前靠 `/proc/<pid>/exe` 是 python 才動手。
+1. `/etc/cron.d` 的註解原本寫「由 `scripts/vm_set_auto_shutdown_cron.sh` 產生」，但那個腳本在 git 與 VM 都查無此物（從未進版控）——已改指向 `scripts/vm/install_vm_guards.sh`。
+2. `tw_watchdog.sh` 的 `pgrep -f selfselect_trader.py` 仍可能誤中未來新增的同名工具；目前靠 `/proc/<pid>/exe` 是 python 才動手。
+3. `deploy_source.sh` 結尾原本會逐條印出「產生名單 `--apply`」與「回滾舊版」的**可直接貼上的指令**（2026-10-27 移除）。兩者都會動到實盤設定：前者改寫 `.env` 的 `PC_*`、後者若沒先停現役容器就會兩隻 bot 同帳號下單。現只留唯讀的對帳指令，其餘指向本文件。

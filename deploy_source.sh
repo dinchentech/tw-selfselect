@@ -214,10 +214,11 @@ if [ "${INSTALL_GUARDS:-0}" = "1" ]; then
   fi
 fi
 echo ""
-echo "下一步（VM 上執行）："
-echo "  1) 對帳模擬券商帳戶（重置後帳本與券商持倉會不一致，這是預期的）："
+echo "下一步（VM 上執行，唯讀）："
+echo "  · 對帳模擬券商帳戶（重置後帳本與券商持倉會不一致，這是預期的）："
 echo "     gcloud compute ssh ${VM_NAME} --zone=${ZONE} --command='sudo docker exec ${CONTAINER} python scripts/reconcile_broker_books.py'"
-echo "  2) 立即產生名單（或等 D1 13:36 自動選股；SELFSELECT_AUTO=1）："
-echo "     gcloud compute ssh ${VM_NAME} --zone=${ZONE} --command='sudo docker exec ${CONTAINER} python scripts/monthly_selfselect_run.py --risk normal --top-n 5 --apply'"
-echo "  3) 回滾到舊 tw-autotrader（舊 image 保留、目錄未動）："
-echo "     gcloud compute ssh ${VM_NAME} --zone=${ZONE} --command='cd ${OLD_DIR} && sudo docker compose up -d'"
+echo ""
+echo "刻意不印的兩步（會動到實盤設定，請照文件手動評估）："
+echo "  · 產生名單：SELFSELECT_AUTO=1 時 D1 13:36 會自動選股；手動 --apply 會改寫 .env 的 PC_*"
+echo "  · 回滾舊版：必須先停 ${CONTAINER}，同一個券商帳號不能兩隻 bot 同時下單"
+echo "  ⇒ 細節見 cairn/deploy-pipeline.md"
