@@ -8,6 +8,7 @@
 #   KEEP_OLD_RUNNING=1 ./deploy_source.sh     # 不停舊的 tw_autotrader_bot（同帳號勿兩隻同時跑！）
 #   VM_DIR=~/other-dir OLD_DIR=~/tw-autotrader ./deploy_source.sh
 #   ENV_FILE=/path/to/.env ./deploy_source.sh # 第一次部署時改上傳你指定的 .env（預設自動產生）
+#   INSTALL_GUARDS=1 ./deploy_source.sh       # 順帶同步 VM 上的守門員（scripts/vm/install_vm_guards.sh）
 #
 # 與 tw-autotrader/deploy_source.sh 的差異
 #   · 這支不碰 live_trader_multi.py／plans 備份（本專案沒有那條腿）
@@ -202,6 +203,16 @@ stty sane 2>/dev/null
 
 echo ""
 echo "✅ 部署完成"
+
+if [ "${INSTALL_GUARDS:-0}" = "1" ]; then
+  echo ""
+  echo "🛡  同步 VM 守門員（watchdog／restart_guard／auto_shutdown）..."
+  if bash scripts/vm/install_vm_guards.sh "${VM_NAME}" "${ZONE}"; then
+    echo "   ✅ 守門員已同步"
+  else
+    echo "   ⚠️ 守門員同步失敗（不影響本次部署；可稍後單獨重跑 scripts/vm/install_vm_guards.sh）"
+  fi
+fi
 echo ""
 echo "下一步（VM 上執行）："
 echo "  1) 對帳模擬券商帳戶（重置後帳本與券商持倉會不一致，這是預期的）："

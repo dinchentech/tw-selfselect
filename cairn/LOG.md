@@ -2,6 +2,14 @@
 
 本檔以倒序記錄實質推進（最新在最上面，緊接這行之下）。每則保持精簡——只寫摘要與指標，結論沉澱到 `cairn/<主題>.md`。
 
+## 2026-10-27 · VM 守門員納入版控 + 補 deploy-pipeline 知識檔
+
+- 把原本只存在 VM `/usr/local/bin` 的三支腳本收進 repo：`scripts/vm/tw_watchdog.sh`、`tw_restart_guard.sh`、`auto_shutdown.sh`。
+- 新增唯一安裝入口 `scripts/vm/install_vm_guards.sh`（idempotent：安裝檔案 + root crontab + `/etc/cron.d` 兩支；`VERIFY_ONLY=1` 只檢查）。已在 VM 實跑一次，驗證 watchdog `exit=0` 不誤報、restart_guard 正常計次。
+- `deploy_source.sh` 加 `INSTALL_GUARDS=1`：部署時可順帶同步守門員（預設不做，避免部署腳本動 root 設定）。
+- 新增 `cairn/deploy-pipeline.md`：部署六步、`tw-autotrader`／`tw_autotrader_bot`／`tw_selfselect_bot` 三個名字的區別、守門員排程與驗證方式、2026-10-02 崩潰迴圈與 2026-10-27 假告警兩次事故。
+- 修掉一個漂移註解：`/etc/cron.d/auto_shutdown` 原本指向不存在的 `scripts/vm_set_auto_shutdown_cron.sh`（git 與 VM 都查無此檔），改指向 `scripts/vm/install_vm_guards.sh`。
+
 ## 2026-10-27 · 雲端 watchdog 綁著母專案容器名，天天假告警（已修）
 
 - 症狀：Telegram `⚠️ TW AutoTrader 容器未運行，已自動重啟（watchdog）` 每 5 分鐘一則；10-26 觸發 **115 次**、10-27 到 11:15 已 **38 次**。
