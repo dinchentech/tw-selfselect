@@ -51,44 +51,29 @@
   footer { text-align: center; color: #aaa; font-size: .75rem; margin-top: 32px; }
 </style>
 </head>
-<body><div style="position:sticky;top:0;z-index:9999;background:#fff3cd;color:#664d03;border-bottom:1px solid #ffe69c;padding:8px 14px;font:14px/1.5 -apple-system,'Segoe UI','Noto Sans TC',sans-serif;text-align:center">
-此頁為 <b>tw-selfselect</b> 的儀表板<b>示範/預覽</b>（頁面資料為<b>範例資料</b>，非真實交易績效）。實際儀表板由 VM 每日 13:45 產生 <code>logs/dashboard.html</code>，只留在 VM 上（不進版控）。
-</div>
-
+<body>
 <div class="container">
   <h1>📊 TW SelfSelect 績效儀表板 <span style="font-size:.9rem;color:#999;font-weight:400;">v1.0.0</span></h1>
-  <div class="subtitle">最後更新：2026-10-26 15:08 · 自選股（單一資金腿）</div>
+  <div class="subtitle">最後更新：2026-10-27 12:32 · 自選股（單一資金腿）</div>
 
   <!-- 總覽卡片 -->
    <div class="cards">
-     <div class="card"><div class="label">總已實現損益</div><div class="value positive">+24,129</div></div>
-     <div class="card"><div class="label">總交易次數</div><div class="value">3</div></div>
-     <div class="card"><div class="label">本腿損益</div><div class="value positive">+24,129</div></div>
+     <div class="card"><div class="label">總已實現損益</div><div class="value positive">+0</div></div>
+     <div class="card"><div class="label">總交易次數</div><div class="value">0</div></div>
+     <div class="card"><div class="label">本腿損益</div><div class="value positive">+0</div></div>
    </div>
 
    <!-- 未平倉部位卡片 -->
    <div class="cards">
-     <div class="card"><div class="label">未實現損益</div><div class="value negative">-60,207</div></div>
-     <div class="card"><div class="label">持倉市值</div><div class="value">519,719.0</div></div>
-     <div class="card"><div class="label">持倉檔數</div><div class="value">3</div></div>
-     <div class="card"><div class="label">總權益</div><div class="value negative">-36,078</div></div>
+     <div class="card"><div class="label">未實現損益</div><div class="value positive">+0</div></div>
+     <div class="card"><div class="label">持倉市值</div><div class="value">0</div></div>
+     <div class="card"><div class="label">持倉檔數</div><div class="value">0</div></div>
+     <div class="card"><div class="label">總權益</div><div class="value positive">+0</div></div>
    </div>
-
+<div style="margin:.6rem 0 1rem;padding:.7rem .9rem;border-left:4px solid #e0a800;background:#2a2416;color:#e8d9a0;border-radius:4px;font-size:.88rem;line-height:1.5;">⚠️ <b>帳務不一致</b>（三本帳稽核）：<b>缺少狀態檔</b>：holdings.json（無法對帳）<br><span style="color:#bda86a;">這些部位不在「未平倉部位」清單裡，而且<b>永遠不會被自動賣出</b>（賣出與孤兒清倉只認 <code>holdings.json</code>）。持倉市值／總權益也因此未計入它們。</span></div>
   <div class="group-section">
     <div class="section-title">📋 未平倉部位</div>
-    <div class="subtitle" style="margin:-6px 0 8px;">📈 參考市價：2026-10-22 ⚠️非當日</div>
-    <table><thead><tr><th>標的</th><th>策略</th><th>股數</th><th>平均成本</th><th>市價</th><th>市值</th><th>未實現損益</th><th>報酬率</th><th>最後買進日</th></tr></thead><tbody>
-      <tr><td>1301</td><td>auto→bollinger</td><td>2797</td><td>72</td><td>74</td>
-          <td>206,419</td><td class="positive">+6,433</td>
-          <td class="positive">+3.22%</td><td>2026-09-30</td></tr>
-      <tr><td>1802</td><td>-</td><td>3076</td><td>65</td><td>67</td>
-          <td>206,400</td><td class="positive">+6,460</td>
-          <td class="positive">+3.23%</td><td>2026-09-30</td></tr>
-      <tr><td>0050</td><td>-</td><td>1000</td><td>180</td><td>107</td>
-          <td>106,900</td><td class="negative">-73,100</td>
-          <td class="negative">-40.61%</td><td>2026-09-15</td></tr>
-
-    </tbody></table>
+    <div class="empty">📭 無未平倉部位</div>
   </div>
 
   <div class="charts">
@@ -98,32 +83,18 @@
 
   <div class="group-section">
     <div class="group-label g1">自選股策略明細</div>
-    <div class="cards">
-      <div class="card"><div class="label">已實現損益</div><div class="value positive">+24,129</div></div>
-      <div class="card"><div class="label">交易次數</div><div class="value">3</div></div>
-      <div class="card"><div class="label">勝率</div><div class="value">66.7%</div></div>
-      <div class="card"><div class="label">交易天數</div><div class="value">5</div></div>
-    </div>
-    <div class="section-title">📋 近 50 筆交易</div>
-    <table><thead><tr><th>日期</th><th>時間</th><th>動作</th><th>標的</th><th>價格</th><th>股數</th><th>損益</th><th>報酬率</th><th>累積損益</th></tr></thead><tbody><tr><td>2026-10-20</td><td>13:26</td><td><span class="act sell">賣</span></td><td>6505</td><td>110</td><td>1923</td><td class="positive">+9,359</td><td class="positive">+4.67%</td><td class="positive">+24,129</td></tr><tr><td>2026-10-16</td><td>13:26</td><td><span class="act sell">賣</span></td><td>4938</td><td>98</td><td>1980</td><td class="negative">-6,098</td><td class="negative">-3.04%</td><td class="positive">+14,770</td></tr><tr><td>2026-10-14</td><td>13:26</td><td><span class="act sell">賣</span></td><td>1101</td><td>29</td><td>7633</td><td class="positive">+20,868</td><td class="positive">+10.42%</td><td class="positive">+20,868</td></tr><tr><td>2026-09-30</td><td>13:27</td><td><span class="act buy">買</span></td><td>4938</td><td>101</td><td>1980</td><td class="muted">—</td><td class="muted">—</td><td class="positive">+0</td></tr><tr><td>2026-09-30</td><td>13:27</td><td><span class="act buy">買</span></td><td>1301</td><td>72</td><td>2797</td><td class="muted">—</td><td class="muted">—</td><td class="positive">+0</td></tr><tr><td>2026-09-30</td><td>13:27</td><td><span class="act buy">買</span></td><td>1802</td><td>65</td><td>3076</td><td class="muted">—</td><td class="muted">—</td><td class="positive">+0</td></tr><tr><td>2026-09-30</td><td>13:26</td><td><span class="act buy">買</span></td><td>6505</td><td>104</td><td>1923</td><td class="muted">—</td><td class="muted">—</td><td class="positive">+0</td></tr><tr><td>2026-09-30</td><td>13:26</td><td><span class="act buy">買</span></td><td>1101</td><td>26</td><td>7633</td><td class="muted">—</td><td class="muted">—</td><td class="positive">+0</td></tr><tr><td>2026-09-15</td><td>09:05</td><td><span class="act buy">買</span></td><td>0050</td><td>180</td><td>1000</td><td class="muted">—</td><td class="muted">—</td><td class="positive">+24,129</td></tr></tbody></table><div class="note" style="margin:.5rem 0 .9rem;color:#888;font-size:.85rem;">損益為<b>淨額</b>（已扣手續費與證交稅）；費率＝0.1425%、最低 NT$20/筆、證交稅 0.3%（賣出）。2026-09-17 之前的交易未記錄實際費用，為<b>依現行費率推定</b>。</div>
-    <div class="section-title">🏷️ 各標的統計</div>
-    <table><thead><tr><th>標的</th><th>交易次數</th><th>買進</th><th>賣出</th><th>損益</th><th>勝率</th></tr></thead><tbody><tr><td>6505</td><td>1</td><td>1</td><td>1</td>
-                    <td class="positive">+9,359</td><td>100.0%</td></tr><tr><td>1101</td><td>1</td><td>1</td><td>1</td>
-                    <td class="positive">+20,868</td><td>100.0%</td></tr><tr><td>4938</td><td>1</td><td>1</td><td>1</td>
-                    <td class="negative">-6,098</td><td>0.0%</td></tr><tr><td>1301</td><td>0</td><td>1</td><td>0</td>
-                    <td class="positive">+0</td><td>0%</td></tr><tr><td>1802</td><td>0</td><td>1</td><td>0</td>
-                    <td class="positive">+0</td><td>0%</td></tr><tr><td>0050</td><td>0</td><td>1</td><td>0</td>
-                    <td class="positive">+0</td><td>0%</td></tr></tbody></table>
+    <div class="empty">📭 尚無交易紀錄</div>
+  </div>
   <div class="strategy-section">
     <div class="section-title">🎬 策略動畫說明</div>
     <div class="strategy-links">
       <a href="bollinger-animation.html" target="_blank" rel="noopener" class="strategy-link">布林通道反轉</a><a href="vwap-animation.html" target="_blank" rel="noopener" class="strategy-link">VWAP 偏離反轉</a><a href="ma_cross-animation.html" target="_blank" rel="noopener" class="strategy-link">均線交叉</a><a href="breakout-animation.html" target="_blank" rel="noopener" class="strategy-link">唐奇安突破</a><a href="keep_wait策略說明.html" target="_blank" rel="noopener" class="strategy-link">Keep & Wait 低接</a>
     </div>
   </div>
-  <footer>TW SelfSelect · 資料不構成投資建議 · 2026-10-26 15:08</footer>
+  <footer>TW SelfSelect · 資料不構成投資建議 · 2026-10-27 12:32</footer>
 </div>
 <script>
-const DATA = {"labels": ["2026-10-14", "2026-10-16", "2026-10-20"], "curve_g1": [20868.0, 14770.0, 24129.0], "symbol_stats_g1": [{"symbol": "6505", "trades": 1, "buys": 1, "sells": 1, "pnl": 9359.0, "win_rate": 100.0}, {"symbol": "1101", "trades": 1, "buys": 1, "sells": 1, "pnl": 20868.0, "win_rate": 100.0}, {"symbol": "4938", "trades": 1, "buys": 1, "sells": 1, "pnl": -6098.0, "win_rate": 0.0}, {"symbol": "1301", "trades": 0, "buys": 1, "sells": 0, "pnl": 0, "win_rate": 0}, {"symbol": "1802", "trades": 0, "buys": 1, "sells": 0, "pnl": 0, "win_rate": 0}, {"symbol": "0050", "trades": 0, "buys": 1, "sells": 0, "pnl": 0, "win_rate": 0}], "pnl_list_g1": [{"date": "2026-10-14", "time": "13:26", "symbol": "1101", "action": "SELL", "price": 29.1, "qty": 7633, "pnl": 20868.0, "pnl_pct": 10.42, "cumulative": 20868.0}, {"date": "2026-10-16", "time": "13:26", "symbol": "4938", "action": "SELL", "price": 98.5, "qty": 1980, "pnl": -6098.0, "pnl_pct": -3.04, "cumulative": 14770.0}, {"date": "2026-10-20", "time": "13:26", "symbol": "6505", "action": "SELL", "price": 109.5, "qty": 1923, "pnl": 9359.0, "pnl_pct": 4.67, "cumulative": 24129.0}]};
+const DATA = {"labels": [], "curve_g1": [], "symbol_stats_g1": [], "pnl_list_g1": []};
 
 // ─── 合併累積損益曲線 ───
 (function() {
