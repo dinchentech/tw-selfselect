@@ -4,7 +4,7 @@
 > 由 [tw-autotrader](https://github.com/dinchentech/tw-autotrader) 拆出，**只有一條資金腿：每月換股的自選股**。
 
 📖 **[使用手冊](使用手冊.md)** — 安裝、參數、每月作業、真錢上線檢查清單
-📊 **[儀表板示範](https://dinchentech.github.io/tw-selfselect/)** — 頁面資料為範例；實機儀表板由 VM 每日 13:45 產生 `logs/dashboard.html`　·　📊 **[策略說明](策略說明.md)** — 策略原理、選股口徑、風控、參數總表
+📊 **[線上儀表板](https://dinchentech.github.io/tw-selfselect/)** — 由 VM 在每個交易日收盤後自動更新（13:45 產生 `logs/dashboard.html`、13:50 推上 GitHub Pages）；要不要公開由 `.env` 的 `DASHBOARD_PUBLISH` 決定，預設 `0`＝不公開（見[使用手冊 §5-3](使用手冊.md#5-3-儀表板公開頁可選預設關閉)）　·　📊 **[策略說明](策略說明.md)** — 策略原理、選股口徑、風控、參數總表
 
 ---
 
@@ -28,7 +28,7 @@
 | 風控 | 大盤年線過濾、帳戶回撤保護（MIN_DRAW_BACK）、買入當下過熱閘門、每日交易次數／虧損上限、滿倉不重複買 |
 | 券商 | 玉山證券（E.Sun SDK：行情＋交易）；另有凱基（mock／實單）介面 |
 | 通知 | Telegram（下單、選股、持倉報告、異常告警），可選 LINE Notify |
-| 儀表板 | `scripts/generate_dashboard.py` 產生 `logs/dashboard.html`（可自行發佈到 GitHub Pages） |
+| 儀表板 | `scripts/generate_dashboard.py` 產生 `logs/dashboard.html`；VM 每交易日 13:45 產生、13:50 自動推上 GitHub Pages（`DASHBOARD_PUBLISH=1` 才啟用） |
 | 部署 | Docker（`docker compose up -d --build`）；雲端建議 GCP e2-micro 之類的便宜 VM |
 
 ## 架構
