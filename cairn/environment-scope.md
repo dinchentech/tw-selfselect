@@ -34,6 +34,12 @@ authoring_mode: ai_generated
 
 1. **環境是資料隔離，不只是旗標**：模擬帳的持股不能帶進真錢帳戶。切 `real` 當天必須清空 `logs/` 狀態檔（`holdings.json`、`stock_allocation.json`、`performance.csv`、`last_trade_times.json`、`daily_trades.json`），否則會拿模擬帳持股對真錢帳戶下單——**會賣出不存在的股票**。`scripts/reset_paper_trading_vm.py` 可協助（本機執行：自動停 bot → 一次性容器執行 → 重建／起回 bot；`--clear-portfolio` 會把 VM `.env` 的 `PC_*` 全部註解），但仍需人工確認。
 2. **`.env` 一律以檔案為準**（`load_dotenv(override=True)`）。原因（2026-10-01 實測）：docker-compose 的 `env_file` 在**建立容器時**把變數注入 process env，之後在主機改 `.env` 不會更新既有的 process env；而 python-dotenv 預設 `override=False` ⇒ 用 `docker exec` 跑的工具（picker／selector／報表…）會讀到**容器啟動當時**的舊值。主程式 `live_trader_multi.py` 也是 `override=True`（V4.36 熱重載），必須一致。
+
+   本專案的三層補救（缺一就會出現「改了 `.env` 卻沒生效」）：① `docker-compose.yml` 同時宣告 `env_file: .env` **與** bind mount `./.env:/app/.env:rw`（容器內看得到檔案）；② 啟動時 `load_dotenv(override=True)` 讓檔案勝過 `env_file` 注入的舊值；③ `env_fingerprint()` 指紋比對，主迴圈與**休眠期間**都會偵測檔案變更並中斷休眠立刻套用（V4.36／V4.38）。
+
+   ⚠️ 驗證時別只看 `docker exec printenv`——那是 `env_file` 在**建立容器當下**的值，不等於 bot 實際在用的值。要看的是 `/app/.env` 與 `printenv` 兩者是否一致、以及 log 有沒有 `📥 偵測到 .env 內容變更`。
+
+   （V4.38 修的坑：`_env_fp_seen` 原本寫在 `while True:` 裡面，每圈被重新初始化 ⇒ 比對永遠 False ⇒ 即時生效從來沒觸發過。狀態必須活在迴圈外。）
 3. **玉山庫存查詢有單位陷阱**（`data/esun_provider.py:query_inventories`，2026-09-23 實測）：
    - 整股列（`ap_code` 為空）：`qty_b`／`cost_sum` 是「股／元」（2884 → `qty_b=2000`、`price_avg=45.45`、`cost_sum=-91029`）。
    - 盤中零股列（`ap_code='5'`）：`stk_dats` 是**以 1 股為單位**（2881 → `qty=1`、`pay_n=-154`），總股數要看 `qty_b`（470）。

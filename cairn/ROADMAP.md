@@ -4,6 +4,7 @@
 
 ## 里程碑
 
+- [ ] **玉山舊部位清理（2026-10-27 使用者交代）**：VM 本機三本帳已清空（`holdings.json` 不存在、`performance.csv` 只有表頭、稽核 `三本帳一致`），但**玉山（模擬帳）那邊可能還留著之前交易留下的持股**。本機看不到 ⇒ 收盤後（避免與主程式的 SDK session 打架）跑 `scripts/reconcile_broker_books.py` 取得券商庫存，再決定：真存在就賣掉或補記進帳本，不存在就走 `scripts/void_untracked_buys.py` 作廢。
 - [ ] 三本帳（`performance.csv`／`holdings.json`／`stock_allocation.json`）在實盤機上恆等，且與券商庫存逐檔一致
 - [ ] 快取汙染零容忍：source 端與消費端都擋掉不可用列，且 `CACHE_SCHEMA_VERSION` 升級流程寫成 runbook
 - [ ] 切 `real` 的狀態檔清空演練（`scripts/reset_paper_trading_vm.py`）實際跑過一次並留下紀錄
