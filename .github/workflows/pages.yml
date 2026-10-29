@@ -2,7 +2,9 @@ name: pages
 
 on:
   push:
-    branches: [main]
+    # `dash` = VM 的儀表板發佈分支（機器人只推這個分支，main 只由人推；
+    #   2026-10-29 改：原本機器人也推 main，會讓人手推的那邊一直被拒）
+    branches: [main, dash]
     paths:
       - "docs/**"
       - ".github/workflows/pages.yml"

@@ -8,11 +8,17 @@
 # 為什麼要這支（2026-10-27 使用者指定）：
 #    儀表板由 selfselect_trader.py 在台北 13:45 產生（logs/dashboard.html），
 #    但 GitHub Pages 站台只認 repo 裡 docs/index.html，而且 pages.yml 只在
-#    「push 到 main 且改到 docs/」時才部署 ⇒ 沒有這支，公開頁永遠停在手動更新那天。
+#    「push 到發佈分支且改到 docs/」時才部署 ⇒ 沒有這支，公開頁永遠停在手動更新那天。
 #
 # 機制：VM 的 ~/tw-selfselect 沒有 .git（deploy_source.sh 是 scp 上傳），
 #    所以另外用一個**只取 docs/ 的 sparse clone**（~ /dash-publish）當發佈工作區，
-#    每次執行都 reset 到 origin/main 再覆蓋檔案、commit、push。
+#    每次執行都 reset 到 origin/<發佈分支> 再覆蓋檔案、commit、push。
+#
+# ⚠️ 2026-10-29 改：發佈分支由 `main` 改成 **`dash`**（`BRANCH` 可覆寫）。
+#    原因：機器人每天往 `main` 推 commit，會讓「人手推的那一邊」永遠落後 1 個 commit
+#    ⇒ 使用者本機 commit 後 push 被拒（非 fast-forward，實際發生過 2026-10-29）。
+#    改成專用分支後，`main` 只由人推，衝突從結構上消失；Pages 仍由 GitHub Actions
+#    建置（`pages.yml` 的觸發分支已加入 `dash`），GitHub 網頁端**不用改任何設定**。
 #
 # ⚠️ 公開性：**要不要公開由使用者決定**，開關是 `.env` 的 `DASHBOARD_PUBLISH`
 #    （預設 0＝不公開；設 1 才會推）。完整儀表板含持股股數、平均成本、總資產，
@@ -33,7 +39,7 @@ CLONE="${CLONE_DIR:-$HOME/dash-publish}"
 TOKEN_FILE="${TOKEN_FILE:-$HOME/.dash-publish-token}"
 DEPLOY_KEY="${DEPLOY_KEY:-$HOME/.dash-deploy-key}"
 REPO_SLUG="${REPO_SLUG:-dinchentech/tw-selfselect}"
-BRANCH="${BRANCH:-main}"
+BRANCH="${BRANCH:-dash}"
 REMOTE_URL="https://github.com/${REPO_SLUG}.git"
 LOG="${DASH_LOG:-$HOME/tw-selfselect/logs/publish_dashboard.log}"
 ENV_FILE="${ENV_FILE:-$HOME/tw-selfselect/.env}"
@@ -111,7 +117,8 @@ cd "$CLONE" || fail "無法進入 $CLONE"
 git remote set-url origin "$REMOTE_URL" >>"$LOG" 2>&1
 git "${AUTH_ARGS[@]}" fetch --depth 1 origin "$BRANCH" >>"$LOG" 2>&1 \
   || fail "fetch 失敗（憑證失效或沒有 Contents 寫入權限？mode=${AUTH_MODE}）"
-git reset --hard "origin/$BRANCH" >>"$LOG" 2>&1 || fail "reset 失敗"
+# 用 checkout -B 讓本地分支名與發佈分支一致（舊版工作區的本地分支是 main）
+git checkout -q -B "$BRANCH" "origin/$BRANCH" >>"$LOG" 2>&1 || fail "切到 origin/$BRANCH 失敗"
 
 cp "$SRC" "$CLONE/docs/index.html" || fail "複製儀表板失敗"
 git add docs/index.html

@@ -13,12 +13,14 @@
 - `1.1.0`（2026-10-29）AI 選股模式（`SELFSELECT_AI`，D1 手動／逾期 fallback）＋ zscore 評分器（`SELFSELECT_SCORING_MODEL`，預設）
   ＋ 選股口徑 preset（`SELFSELECT_PRESET`，預設 `revenue`：池 100＋營收因子）＋實盤與回測逐位一致的驗證；
   同批把宇宙補回 62 檔已下市個股、PER 補到 672/672、月營收補到 645/672。
+- `1.1.1`（2026-10-29）儀表板發佈改推 **`dash` 分支**（`scripts/vm/publish_dashboard.sh`）＋ `pages.yml` 觸發分支加 `dash`：
+  機器人不再往 `main` 推 commit，解決「人手 push 被拒（非 fast-forward）」。GitHub Pages 設定不用改。
 """
 import hashlib
 from datetime import datetime
 from pathlib import Path
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
 # ── 建置標記 ─────────────────────────────────────────────────────────────
 # ⚠️ 這裡**不是**「程式啟動時間」。原本 banner 用 `datetime.now()` 當 BUILD_DATE，

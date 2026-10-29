@@ -2,6 +2,19 @@
 
 本檔以倒序記錄實質推進（最新在最上面，緊接這行之下）。每則保持精簡——只寫摘要與指標，結論沉澱到 `cairn/<主題>.md`。
 
+## 2026-10-29 · v1.1.1：儀表板發佈改推 `dash` 分支（解決「人手 push 被拒」）
+
+- 問題：`publish_dashboard.sh` 的發佈工作區（VM 上的 sparse clone）每天 13:50 直接推 `main`
+  ⇒ 遠端 `main` 多一個機器人 commit（`5f8d7e7 儀表板：自動發佈 2026-10-29 資料`），使用者本機 commit 後 push 被拒（非 fast-forward）。
+- 修法（結構解，GitHub 網頁端**不用改任何設定**）：`BRANCH` 預設 `main` → **`dash`**；`.github/workflows/pages.yml` 觸發分支加 `dash`；
+  發佈工作區改用 `checkout -B "$BRANCH" origin/$BRANCH`（舊工作區本地分支是 main 也能直接切換）。
+  已建立遠端 `dash` 分支（起點＝當時的 `docs/index.html`），Pages 仍由 Actions 建置。
+- 版號 `1.1.0 → 1.1.1`（依「改程式就 +1」規則）。部署仍待使用者手動 `./deploy_source.sh`；
+  部署後 13:50 的發佈會改推 `dash`，`main` 從此只由人推。
+- 本機另設 `git config pull.rebase true` / `rebase.autoStash true`（雙保險；這次 push 被拒就是用 `pull --rebase` 解的）。
+- 附帶更正：先前把「Pages 來源」講成「Deploy from a branch → gh-pages」是**錯的建議**——本 repo 的 Pages 是
+  `build_type=workflow`（GitHub Actions 從 `docs/` 建置），純分支模式反而要停用 `pages.yml`。已改走 `dash` 分支方案。
+
 ## 2026-10-29 · VM 已升上 **v1.1.0**（指紋 132bdb86）並實測新口徑可用
 
 - 使用者重跑 `deploy_source.sh` 後成功：banner `🚀 TW SelfSelect v1.1.0 (build 2026-10-29 22:42:12 / 132bdb86)`、啟動 23:26:51，
