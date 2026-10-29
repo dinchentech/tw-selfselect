@@ -32,7 +32,7 @@ class TestClassify(unittest.TestCase):
         orphans, replaceable, _ = mod.classify(env, held)
         self.assertEqual(orphans, [])
         self.assertEqual(replaceable, ["2464"], "0 股且非 keep_wait 才可安全移除")
-        self.assertNotIn("3017", replaceable, "keep_wait（全輪替腿）不由自選股汰換")
+        self.assertNotIn("3017", replaceable, "keep_wait（另一條腿）不由自選股汰換")
         self.assertNotIn("2006", replaceable, "持有中的不可列為汰換")
 
     def test_empty_holdings_all_monitored_are_replaceable(self):

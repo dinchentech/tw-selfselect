@@ -3,7 +3,7 @@ type: project_topic
 status: active
 summary: "模擬／真錢環境隔離、切 real 前的六項檢查清單、玉山庫存查詢與送單股數的單位陷阱，以及 docker 與 .env 的時序陷阱"
 tags: [環境, 玉山, 實盤, 對帳, 事故]
-contains: [背景, 當前結論, 實踐指南, 教訓, 開放問題]
+contains: [experience, procedure, lesson, open_question]
 created: "2026-10-26"
 updated: "2026-10-26"
 related: [total-assets-reconciliation.md]

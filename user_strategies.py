@@ -53,6 +53,27 @@ def price_band(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
 # ==========================================
 # 策略範本 2（g1_strategy_2）— 週 KD 黃金交叉策略
 # ==========================================
+_WEEK_CAL = None
+
+
+def _is_week_final(last_day) -> bool:
+    """最後一根週 K 所在的週是否已走完（該週已無更晚的交易日）。
+
+    實盤每輪都會用「今天」那根日 K 重算週 KD（selfselect_trader.py 會把即時價
+    合成當日 K），所以未收盤的週也可能出現交叉；回測則把週訊號放在該週最後
+    一個交易日。這裡擋掉「未收完的週」，讓兩邊一致。
+    """
+    global _WEEK_CAL
+    try:
+        if _WEEK_CAL is None:
+            from core.trading_calendar import TradingCalendar
+            _WEEK_CAL = TradingCalendar()
+        return bool(_WEEK_CAL.is_last_trading_day_of_week(last_day))
+    except Exception:
+        # 日曆檔壞掉／不在 → 退回「週五才算封週」，不讓策略因日曆問題停擺
+        return pd.Timestamp(last_day).weekday() == 4
+
+
 def weekly_kd_golden_cross(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
     """
     策略範本 2（g1_strategy_2）- 週 KD 黃金交叉策略
@@ -60,6 +81,10 @@ def weekly_kd_golden_cross(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
     將日線資料重新採樣為週線，計算週 KD(9,3,3)，在低檔黃金交叉時買進，
     死亡交叉時賣出。含「持倉狀態機」：空手才買、持倉才賣，使訊號 +1/-1
     嚴格交替，一年一檔約 1~2 次訊號，適合中長期波段操作。
+
+    訊號只放在「該週最後一個交易日」，且**未收完的週不發訊號**（實盤週 KD
+    要等該週最後交易日 13:25–13:30 的收盤前窗口才判定；週五休市則提前到該週
+    最後一個交易日）。
 
     Parameters:
     - df: 包含 OHLCV 資料的 DataFrame（日線，DatetimeIndex）
@@ -151,6 +176,10 @@ def weekly_kd_golden_cross(df: pd.DataFrame, **kwargs) -> pd.DataFrame:
             weekly_sig.iloc[i] = -1
             position = 0
         prev_kv, prev_dv = ki, di
+
+    # ── 未收完的週不發訊號（只有資料最後一週可能未收完，已收盤週不受影響） ──
+    if len(weekly) > 0 and not _is_week_final(weekly.index[-1]):
+        weekly_sig.iloc[-1] = 0
 
     # ── 週線訊號映射回日線（放在該週最後一個交易日），其餘為 0 ──
     out['signal'] = weekly_sig.reindex(out.index).fillna(0).astype(int)

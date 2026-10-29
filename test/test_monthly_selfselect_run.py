@@ -4,7 +4,7 @@ SOP 1–4 原本是：①跑 picker（抓回實盤 holdings）②讀 賣出/維�
 ④同步到 VM。本工具把它們合成一步，但**保留人為關卡**：
   - 預設 **dry-run**（只印 diff，不寫檔）；要真的寫入必須加 `--apply`。
   - **絕不刪除「已持倉」的股票**（刪了會被孤兒清倉賣掉）——這是硬性安全檢查。
-  - **絕不動 keep_wait（全輪替腿）**。
+  - **絕不動 keep_wait（另一條腿）**。
   - 只 scp `.env`；程式改動仍要人工 `deploy_source.sh`（部署硬規則）。
 """
 import json
@@ -38,6 +38,40 @@ TOTAL_CAPITAL=1200000
 """
 
 
+class TestPoolNWiring(unittest.TestCase):
+    """2026-10-27：候選池大小 `--pool-n`（SELFSELECT_POOL_N）接線。"""
+
+    def test_resolve_pool_n(self):
+        self.assertEqual(msr.resolve_pool_n(None, {}), 100, "未設定時維持舊行為 100")
+        self.assertEqual(msr.resolve_pool_n(None, {"SELFSELECT_POOL_N": "50"}), 50)
+        self.assertEqual(msr.resolve_pool_n(30, {"SELFSELECT_POOL_N": "50"}), 30, "CLI 優先")
+        self.assertEqual(msr.resolve_pool_n(None, {"SELFSELECT_POOL_N": "oops"}), 100)
+        self.assertEqual(msr.resolve_pool_n(None, {"SELFSELECT_POOL_N": "0"}), 100)
+
+    def test_picker_cmd_includes_pool_n(self):
+        import argparse
+        args = argparse.Namespace(risk="normal", top_n=5, sync_holdings_from_vm=False,
+                                  vm=None, zone=None, allow_stale_holdings=False,
+                                  ignore_drawback=False)
+        cmd = msr.build_picker_cmd(args, 50)
+        self.assertEqual(cmd[cmd.index("--pool-n") + 1], "50")
+        self.assertEqual(cmd[cmd.index("--top-n") + 1], "5")
+        self.assertNotIn("--sync-holdings-from-vm", cmd)
+        self.assertNotIn("--allow-stale-holdings", cmd)
+
+    def test_picker_cmd_carries_flags(self):
+        import argparse
+        args = argparse.Namespace(risk="high_profit", top_n=3, sync_holdings_from_vm=True,
+                                  vm="my-vm", zone="asia-east1-b", allow_stale_holdings=True,
+                                  ignore_drawback=True)
+        cmd = msr.build_picker_cmd(args, 100)
+        self.assertIn("--sync-holdings-from-vm", cmd)
+        self.assertEqual(cmd[cmd.index("--vm") + 1], "my-vm")
+        self.assertIn("--allow-stale-holdings", cmd)
+        self.assertIn("--ignore-drawback", cmd)
+        self.assertEqual(cmd[cmd.index("--risk") + 1], "high_profit")
+
+
 class TestPlan(unittest.TestCase):
     def setUp(self):
         self.held = {"2006": 689, "3515": 286, "3017": 94, "3653": 34}
@@ -54,7 +88,7 @@ class TestPlan(unittest.TestCase):
         plan = msr.plan_env_changes(ENV, self.held, ["2884"], per_name_alloc=6.0)
         self.assertNotIn("2006", plan["remove"])
         self.assertNotIn("3515", plan["remove"])
-        self.assertNotIn("3017", plan["remove"], "keep_wait 屬全輪替腿，不可動")
+        self.assertNotIn("3017", plan["remove"], "keep_wait 屬另一條腿，不可動")
 
     def test_adds_new_selected_with_alloc(self):
         plan = msr.plan_env_changes(ENV, self.held, ["2884", "2881", "5876", "3045"],

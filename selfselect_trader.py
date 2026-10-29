@@ -1,5 +1,5 @@
 # TW SelfSelect Trader — 台股「自選股（每月換股）」自動交易主程式
-# 由 tw-autotrader 拆出：只保留自選股腿（全輪替／法人動能兩條腿已移除）
+# 由 tw-autotrader 拆出：只保留自選股腿（母專案其他策略腿已移除）
 #【軟體使用與免責聲明】本軟體係依「現狀（AS-IS）」提供，不帶有任何形式的明示或暗示之保證（包括但不限於對適銷性、特定目的之適用性以及不侵權的暗示保證）。
 # 開發團隊（或本公司）在任何情況下，均不對因使用或無法使用本軟體所引起的任何直接、間接、偶發、特殊、懲罰性或衍生性損失（包括但不限於利潤損失、業務中斷、資料遺失、設備損壞或電腦故障）承擔任何法律及賠償責任，亦不對任何第三方提出的索賠負責。
 # 使用者須自行承擔使用本軟體之所有風險。
@@ -744,18 +744,24 @@ def main():
                   signal = 0
               if (not take_profit) and (signal == 0):
                 # ── DCA 加碼檢查 ──
-                if ((drop_pct >= kw_drop_pct) and (trk['buy_count'] < kw_max_add)):
+                # 2026-10-27：`max_additions` 的語意＝**加碼次數（不含初始建倉）**。
+                #   原本判 `buy_count < max_additions`，但初始建倉／偵測既有持股就把 buy_count 設 1
+                #   ⇒ max_additions=2 實際只加碼 1 次（文件與投影片都寫 2 次）。改判 `(buy_count-1)`。
+                if ((drop_pct >= kw_drop_pct) and ((trk['buy_count'] - 1) < kw_max_add)):
                   if (kw_max_entry_price > 0) and (px > kw_max_entry_price):
                     print(f'⏸️  {symbol} DCA 跳過: 價格 {px:.2f} > 上限 {kw_max_entry_price:.2f}')
                     signal = 0
                   else:
+                    # ⚠️ tracker 只能在真的要下單時更新（2026-10-27 修）：原本這幾行寫在 if/else 之外，
+                    #   被 max_entry_price 擋掉的那次也會 ++buy_count、改寫 last_buy_price/total_cost/total_shares
+                    #   ⇒ 加碼額度被吃掉、均價與股數記成沒發生的交易。
                     signal = 1
                     position_size = kw_add
-                  trk['last_buy_price'] = px
-                  trk['total_cost'] += (px * position_size)
-                  trk['total_shares'] += position_size
-                  trk['buy_count'] += 1
-                  print(f"📉 {symbol} DCA 第 {trk['buy_count']} 次加碼 {position_size} 股 @ {px:.0f}（距前次 -{drop_pct:.1f}%）")
+                    trk['last_buy_price'] = px
+                    trk['total_cost'] += (px * position_size)
+                    trk['total_shares'] += position_size
+                    trk['buy_count'] += 1
+                    print(f"📉 {symbol} DCA 第 {trk['buy_count']} 次加碼 {position_size} 股 @ {px:.0f}（距前次 -{drop_pct:.1f}%）")
                 else:
                   signal = 0
             if (signal == 0):

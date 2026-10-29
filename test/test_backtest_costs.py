@@ -1,4 +1,4 @@
-"""回歸測試：每季全輪替回測 (backtest_selector) 必須計入交易成本。
+"""回歸測試：母專案的季度換股回測 (backtest_selector) 必須計入交易成本。
 
 Bug 背景：backtest_selector 買賣僅以收盤價計算 shares/市值，未扣
 手續費 (0.1425%) 與證交稅 (0.3%)，導致回測績效高估；

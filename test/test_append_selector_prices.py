@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """`scripts/append_selector_prices.py` 的回歸測試（2026-09-14）。
 
-背景：`cache/selector_prices/` 供全輪替選股，但 `load_stock()` 有快取就直接用
+背景：`cache/selector_prices/` 供母專案季度換股選股，但 `load_stock()` 有快取就直接用
 （沒有新鮮度檢查）⇒ 候選池 100 檔實測全部停在 2026-08-13。
 同一份快取也供 selector 自己的 `--grid/--backtest` 用（涵蓋 2015 起）
 ⇒ **只能附加、不能重抓或覆蓋**（重抓會讓歷史數值變動、回測結果靜默改變）。

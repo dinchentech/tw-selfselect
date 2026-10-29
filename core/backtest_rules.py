@@ -10,6 +10,78 @@ import os
 
 
 
+def leverage_for_target(util_avg, target_pct, max_leverage=5.0) -> float:
+    """把「平均曝險比例」放大到 `target_pct`% 所需的部位倍數（`LEVERAGE`）。
+
+    為什麼要有（2026-10-28 使用者需求）：自選股腿的平均曝險只有 ~57~86%（有時在等訊號、
+    有時剛換股還在空倉）⇒ 直接拿「只用 79% 資金的報酬」去比 0050 那種 100% 曝險的基準並不公平。
+    這個函式算出「若要平均用滿 `target_pct`% 的資金，每筆部位要放大幾倍」。
+
+    - `util_avg`＝量到的平均曝險（0~1；`deployed ÷ 當下權益` 的平均）
+    - `target_pct`＝目標曝險（%，100 = 用滿）
+    - 回傳 **>= 1.0**（不縮小部位）且 <= `max_leverage`；資料不足／目標合理時回 1.0
+    - ⚠️ 放大＝需要融資（現金可能為負）或只是「把閒置現金押上去」；回撤/夏普會等比例惡化，
+      不是免費午餐。回測另以 `MARGIN_RATE` 對負現金計息。
+    """
+    try:
+        util = float(util_avg)
+        target = float(target_pct)
+    except (TypeError, ValueError):
+        return 1.0
+    if util <= 0 or target <= 0:
+        return 1.0
+    lev = (target / 100.0) / util
+    if lev < 1.0:
+        return 1.0
+    return float(min(lev, float(max_leverage)))
+
+
+def above_ma200(close_series, as_of, window=200):
+    """大盤年線濾網：`as_of`（含）以前最後一筆收盤 > 其 MA`window` ⇒ True（可以買）。
+
+    與實盤一致（`core/market_filter.py` + `selfselect_trader.py`：買進前檢查
+    `MARKET_TREND_FILTER`，指數在年線下就**跳過買進**，賣出不受影響）。
+
+    回傳：
+    - `True`  = 在年線之上（允許買）
+    - `False` = 在年線之下（攔截買進）
+    - `None`  = 資料不足 `window` 筆 ⇒ **不過濾**（與實盤「資料不足 ⇒ 跳過過濾」同義）
+
+    只用 `as_of`（含）以前的資料（不會偷看未來）。
+    """
+    try:
+        s = close_series[close_series.index <= as_of]
+    except Exception:
+        return None
+    if s is None or len(s) < window or window <= 0:
+        return None
+    try:
+        ma = float(s.iloc[-window:].mean())
+        px = float(s.iloc[-1])
+    except (TypeError, ValueError):
+        return None
+    if ma <= 0 or px <= 0:
+        return None
+    return px > ma
+
+
+def selection_month_starts(month_starts, n) -> set:
+    """每 `n` 個月取一個「換股（選股）點」→ set（`n=1` ⇒ 全部月份，＝舊的每月換股）。
+
+    `month_starts` 是「每個月第 1 個交易日」的序列（任意順序，內部排序）。
+    `n=12` ⇒ 期間內第 1、13、25… 個月（**不是**日曆對齊到 1 月；對齊後的實盤規則
+    在 `core/selfselect_scheduler.is_selection_month`，那邊是日曆月 1/13/25…）。
+
+    為什麼要抽成純函式（2026-10-28）：換股頻率是**回測與實盤都要一致**的口徑，
+    而回測腳本 import 時會載入全市場快取（~50 秒）⇒ 規則留在 `core/` 才能被單元測試。
+    """
+    try:
+        step = max(1, int(n))
+    except (TypeError, ValueError):
+        step = 1
+    return set(sorted(month_starts)[::step])
+
+
 def stop_hit(px, entry, stop_pct) -> bool:
     """硬停損是否觸發：`px <= entry × (1 − pct/100)`（以當日收盤價判定）。
 
@@ -130,6 +202,14 @@ ENV_OVERRIDE_KEYS = (
     "MIN_OVERHEAT", "ENTRY_OVERHEAT", "OH_RSI_TH", "OH_DIST_WIN", "OH_DIST_TH",
     "OH_ENTRY_MODE", "HOT_EXIT", "HOT_EXIT_GROUPS", "HOT_TP_PCT", "HOT_TRAIL_PCT",
     "HOT_THRESHOLD", "GROUPS_ONLY",
+    # 2026-10-28 新旋鈕（換股頻率／大盤年線／閒置停泊／部位放大／口徑 profile／固定名單）
+    "REBAL_MONTHS", "MARKET_FILTER", "MF_WINDOW", "IDLE_CASH_ASSET", "PARK_COST",
+    "LEVERAGE", "SCALE_TO_UTIL", "MARGIN_RATE", "PROFILE", "POOL_FIXED",
+    "FILL_MODE", "SELFSELECT_FILL_MODE",
+    # 2026-10-29：選股口徑（評分模型／因子／宇宙）——這些也必須「明示優先」，
+    #   否則 `PRESET=aggressive FACTOR_REVENUE=0` 會被 preset 覆寫，跟文件寫的規則相反。
+    "SCORING_MODEL", "FACTOR_REVENUE", "MAX_PER_SECTOR", "UNIVERSE_DELISTED",
+    "PRESET", "SELFSELECT_PRESET", "SELFSELECT_FACTOR_REVENUE", "SELFSELECT_MAX_PER_SECTOR",
     # 資料來源／選股工具
     "HIST_SHARES", "SELECTOR_LOOKBACK_DAYS",
 )

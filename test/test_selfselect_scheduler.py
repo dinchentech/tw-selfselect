@@ -9,6 +9,7 @@
 `scripts/monthly_selfselect_run.py`（故容器內不必重寫交易邏輯）。
 """
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -89,6 +90,35 @@ class TestShouldPick(unittest.TestCase):
         self.assertIsNotNone(ss.should_pick(D2, state), "換一天應該有新的重試額度")
 
 
+class TestRebalMonths(unittest.TestCase):
+    """換股頻率（2026-10-28）：每 N 個月才選股一次；N=1 必須與舊行為完全相同。"""
+
+    def test_default_is_every_month(self):
+        self.assertEqual(ss.REBAL_MONTHS, 1, "預設必須是每月，否則等於偷改實盤行為")
+        for m in range(1, 13):
+            self.assertTrue(ss.is_selection_month(datetime(2026, m, 1), 1), m)
+
+    def test_n12_means_january_only(self):
+        picked = [m for m in range(1, 13) if ss.is_selection_month(datetime(2026, m, 1), 12)]
+        self.assertEqual(picked, [1])
+
+    def test_n4_quarters(self):
+        picked = [m for m in range(1, 13) if ss.is_selection_month(datetime(2026, m, 1), 4)]
+        self.assertEqual(picked, [1, 5, 9])
+
+    def test_skips_non_selection_months(self):
+        """非選股月即使落在 D1 時窗內也不該跑（維持原持股）。"""
+        orig = ss.REBAL_MONTHS
+        try:
+            ss.REBAL_MONTHS = 12
+            # 2026-11-02（一）＝11 月第 1 個交易日，但 N=12 ⇒ 只有 1 月選股
+            self.assertIsNone(ss.should_pick(datetime(2026, 11, 2, 13, 40), {}))
+            # 2026-01-02（五）＝1 月第 1 個交易日 ⇒ 選股月，照常觸發
+            self.assertIsNotNone(ss.should_pick(datetime(2026, 1, 2, 13, 40), {}))
+        finally:
+            ss.REBAL_MONTHS = orig
+
+
 class TestCommandAndParsing(unittest.TestCase):
     def test_command_is_the_tested_sop_script_with_apply(self):
         cmd = ss.picker_command()
@@ -96,6 +126,23 @@ class TestCommandAndParsing(unittest.TestCase):
         self.assertIn("--apply", cmd, "自動選股要真的寫 .env（腳本自己會先備份）")
         self.assertIn("--no-sync", cmd, "容器內持股就是實盤持股，不需要去 VM 抓")
         self.assertIn("--top-n", cmd)
+
+    def test_command_passes_pool_n_from_env(self):
+        """2026-10-27：`--pool-n` 要能從 SELFSELECT_POOL_N 傳進去（預設 100）。"""
+        import os
+        os.environ["SELFSELECT_POOL_N"] = "50"
+        try:
+            cmd = ss.picker_command()
+        finally:
+            os.environ.pop("SELFSELECT_POOL_N", None)
+        self.assertIn("--pool-n", cmd)
+        self.assertEqual(cmd[cmd.index("--pool-n") + 1], "50")
+
+    def test_command_pool_n_defaults_to_100(self):
+        import os
+        os.environ.pop("SELFSELECT_POOL_N", None)
+        cmd = ss.picker_command()
+        self.assertEqual(cmd[cmd.index("--pool-n") + 1], "100")
 
     def test_command_respects_env_overrides(self):
         import os
@@ -218,3 +265,50 @@ class TestTraderWiring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestAiMode(unittest.TestCase):
+    """AI 選股模式（2026-10-28）：D1 先等使用者手動完成，期限後 fallback 自動選股。"""
+
+    def setUp(self):
+        self._orig = ss.AI_MODE
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state = os.path.join(self.tmp.name, "state.json")
+
+    def tearDown(self):
+        ss.AI_MODE = self._orig
+        self.tmp.cleanup()
+
+    def test_off_by_default(self):
+        self.assertEqual(ss.AI_MODE, False, "預設必須關閉（否則等於偷改實盤排程）")
+
+    def test_d1_waits_before_deadline(self):
+        ss.AI_MODE = True
+        before = datetime(2026, 10, 1, 13, 40)      # D1、期限 13:50 前
+        self.assertIsNone(ss.should_pick(before, {}), "AI 模式在 D1 期限前不該自動選股")
+        self.assertTrue(ss.ai_pending({}, before))
+
+    def test_d1_fallback_after_deadline(self):
+        ss.AI_MODE = True
+        after = datetime(2026, 10, 1, 13, 52)       # D1、已過期限
+        due = ss.should_pick(after, {})
+        self.assertIsNotNone(due, "期限到還沒完成 ⇒ D1 當天 fallback 自動選股")
+        self.assertIn("fallback", due["label"])
+
+    def test_ai_applied_skips_fallback(self):
+        ss.AI_MODE = True
+        ss.mark_applied("2026-10", picks=["2330"], source="ai", state_path=self.state)
+        after = datetime(2026, 10, 1, 13, 52)
+        self.assertIsNone(ss.should_pick(after, ss.load_state(self.state)),
+                          "AI 已完成 ⇒ 不得再用規則選股覆蓋")
+
+    def test_off_mode_runs_immediately(self):
+        ss.AI_MODE = False
+        self.assertIsNotNone(ss.should_pick(datetime(2026, 10, 1, 13, 40), {}))
+
+    def test_deadline_parse_and_compare(self):
+        self.assertTrue(ss.ai_deadline_passed(datetime(2026, 10, 1, 14, 0), "13:50"))
+        self.assertFalse(ss.ai_deadline_passed(datetime(2026, 10, 1, 13, 0), "13:50"))
+        self.assertTrue(ss.ai_deadline_passed(datetime(2026, 10, 1, 23, 0), "bad"),
+                        "壞值退回 13:50 ⇒ 23:00 已過期限")
+        self.assertFalse(ss.ai_deadline_passed(datetime(2026, 10, 1, 9, 0), "bad"))

@@ -1,7 +1,9 @@
 """方案二改「每月換股」+ 三組獨立選股策略回測（2022-2025, NT$500,000 單筆）— 訊號執行版
 
 用法: python scripts/backtest_plan2_monthly_3group.py
-環境覆寫: START END POOL_N TOP_N INITIAL MIN_PRICE MOM_DAYS
+環境覆寫: START END POOL_N TOP_N REBAL_MONTHS INITIAL MIN_PRICE MOM_DAYS
+         （REBAL_MONTHS=1 每月換股＝預設；12＝一年換一次股）
+         （LEVERAGE=1.26 部位放大；SCALE_TO_UTIL=100 自動把平均曝險等效拉到 100%）
 
 設計（誠實、無事後之明、依使用者修正）:
 - 候選池 = 誠實池：每季以「當時市價 × 歷史股本」重建當時市值前 POOL_N 大（無倖存者偏差）。
@@ -41,10 +43,36 @@ load_dotenv(override=True)
 
 import pandas as pd, numpy as np
 from core.cache_io import load_cache_or_raw
-from core.candidate_pool import build_quarterly_pool
+from core.candidate_pool import (build_quarterly_pool, include_delisted,
+                                load_historical_shares)
 import scripts.stock_selector_grid as ssg   # noqa: E402  ← 這個 import 也會載一次 .env
 
 apply_env_overrides(_ENV_OVERRIDES)          # 明確指定的 env > .env（.env 只當預設來源）
+
+# ── 口徑 profile（2026-10-28）：PROFILE=conservative|fair|levered|raw
+#   只填「使用者沒有明示」的變數；明示的環境變數一律優先。
+_PROFILE_NAME = os.getenv("PROFILE", "").strip()
+if _PROFILE_NAME:
+    from core.backtest_profiles import expand as _profile_expand, resolve as _profile_resolve
+    _prof = _profile_resolve(_PROFILE_NAME)          # 名稱錯 → ValueError（大聲失敗）
+    for _k, _v in _profile_expand(_PROFILE_NAME, _ENV_OVERRIDES).items():
+        os.environ[_k] = _v
+    print(f"口徑 profile: {_PROFILE_NAME}（{_prof['label']}）→ " +
+          "、".join(f"{k}={v or '(空)'}" for k, v in _prof["env"].items()))
+# ── 選股口徑 preset（2026-10-29）：PRESET=current|revenue|aggressive
+#   只填「使用者沒有明示」的變數；`current` 是預設（＝與舊行為相同）。後果會印出來，不偷偷生效。
+from core.selection_presets import (DEFAULT_PRESET as _DEFAULT_PRESET, PRESETS as _PRESETS,
+                                    active_name as _preset_name, expand as _preset_expand,
+                                    warning_text as _preset_warning)
+
+_PRESET = _preset_name()
+for _k, _v in _preset_expand(_PRESET, _ENV_OVERRIDES).items():
+    os.environ.setdefault(_k, _v)          # 明示的環境變數一律優先（不被 preset 蓋掉）
+print(f"選股口徑 preset: {_PRESET}（{_PRESETS[_PRESET]['label']}）→ " +
+      "、".join(f"{k}={os.environ.get(k)}" for k in _PRESETS[_PRESET]["knobs"]))
+if _PRESET != _DEFAULT_PRESET:
+    print(_preset_warning())
+
 from strategies.bollinger import bollinger_reverse_strategy
 from strategies.ma_cross import ma_cross_strategy
 from strategies.vwap_deviation import vwap_deviation_strategy
@@ -53,7 +81,80 @@ from strategies.breakout import breakout_strategy
 START = os.getenv("START", "2022-01-01")
 END = os.getenv("END", "2025-12-31")
 POOL_N = int(os.getenv("POOL_N", "100"))
+# 固定名單池（2026-10-28 新增，評估用）：`POOL_FIXED=2330,2454,...` 時**不用誠實逐季池**，
+#   直接拿這份名單當候選池（用來回答「同一批人工挑的股票，換成我們的規則會怎樣」）。
+#   預設空 = 走誠實池（市值前 POOL_N）。
+POOL_FIXED = [x.strip() for x in os.getenv("POOL_FIXED", "").split(",") if x.strip()]
+# 選不滿 N 檔時怎麼辦（2026-10-28 新增，使用者選項）：
+#   proportional（預設）＝就選出的那幾檔，資金平均分配（每檔吃 1/N_selected）
+#   topup             ＝補滿：仍要求技術條件（價格／動能或波動／均線位階）通過，
+#                        但**放寬「過熱」與「法人」兩道濾網**，依分數順序補到 N 檔
+# 兩者都完全可重現；只是「寧缺勿濫」或「寧濫勿缺」的取捨。
+# AI 選股名單（2026-10-29 新增，分析用）：`AI_PICKS_FILE=path.json`，
+# 格式 `{"2022-01-03": ["2330","2454",...], ...}`；**只有正常組**會用（其他組照原本規則）。
+# 有對應日期的就用該清單（不看濾網），沒有的日期照原本規則選 ⇒ 可以跟「純程式」同口徑比較。
+AI_PICKS_FILE = os.getenv("AI_PICKS_FILE", "").strip()
+_AI_PICKS = {}
+_AI_KEYS = []
+if AI_PICKS_FILE:
+    import json as _json
+    try:
+        with open(AI_PICKS_FILE, encoding="utf-8") as _f:
+            _raw = _json.load(_f)
+        _AI_PICKS = {str(k): [str(x) for x in v] for k, v in (_raw.get("picks") or _raw).items()
+                     if isinstance(v, (list, tuple))}
+        print(f"AI 名單檔：{AI_PICKS_FILE}（{len(_AI_PICKS)} 個日期；僅正常組使用）")
+        _AI_KEYS = sorted(_AI_PICKS)
+    except Exception as _e:
+        raise SystemExit(f"❌ 讀不到 AI_PICKS_FILE（{_e}）")
+
+# 評分模型（2026-10-29 新增）：
+#   legacy（預設）＝現行的 ssg.score_stock() 綜合分（動能＋技術面＋穩定度＋催化劑，權重見 DEFAULT_PARAMS）
+#   zscore        ＝「AI 代理」用的固定公式：先篩 0 < PER ≤ 40，再以當日橫斷面 z 分數
+#                    score = 0.40·z(63日報酬) + 0.25·z(20日報酬) + 0.20·z(距52週高) + 0.15·z(−PER)
+#                    （2016-2025 實測：+110.0% vs legacy +57.0%，見 README 六組合段）
+SCORING_MODEL = os.getenv("SCORING_MODEL", "zscore").strip().lower()
+# 營收成長因子（2026-10-29）：把月營收 YoY 加進 z 分數（權重配置見 core/scoring.py WEIGHTS_REVENUE）
+FACTOR_REVENUE = os.getenv("FACTOR_REVENUE", "1") == "1"
+# 產業分散上限（2026-10-29）：每個產業最多取幾檔（0＝不限）。需要 cache/stock_industry.pkl
+MAX_PER_SECTOR = int(os.getenv("MAX_PER_SECTOR", "0"))
+if SCORING_MODEL not in ("legacy", "zscore"):
+    raise SystemExit(f"❌ SCORING_MODEL 只能是 legacy 或 zscore（收到 {SCORING_MODEL!r}）")
+
+FILL_MODE = os.getenv("FILL_MODE", "proportional").strip().lower()
+if FILL_MODE not in ("proportional", "topup"):
+    raise SystemExit(f"❌ FILL_MODE 只能是 proportional 或 topup（收到 {FILL_MODE!r}）")
+# 補滿時**只用個股**（2026-10-29 使用者裁定）：ETF 只用在「閒置資金停泊」（IDLE_CASH_ASSET），
+# 不參與選股、也不拿來補滿。補滿＝先放寬「過熱／法人」，仍不足再依 63 日動能補。
 TOP_N = int(os.getenv("TOP_N", "5"))
+# 換股頻率（2026-10-28 新增）：每 REBAL_MONTHS 個月才「選股一次」（剔除未選中者＋補新標的）。
+#   1 = 每月（預設，與舊行為完全相同）；12 = 一年換一次股（母專案「逐年檢討」那種節奏）。
+#   ⚠️ 非選股月份仍照常逐日跑策略訊號：賣出、同檔回補都照舊，只是不會被換成新標的。
+REBAL_MONTHS = max(1, int(os.getenv("REBAL_MONTHS", "1")))
+# ── 資金利用率「等效放大」（2026-10-28 新增，使用者需求）───────────────────
+# 為什麼：自選股腿的平均曝險只有 ~57~86%（等訊號、剛換股還在空倉）⇒ 直接拿「只用 79% 資金的報酬」
+#   去比 0050（100% 曝險）不公平。兩個旋鈕：
+#   LEVERAGE=1.26      → 每筆部位固定放大 1.26 倍（現金會轉負 ⇒ 等同融資，按 MARGIN_RATE 計息）
+#   SCALE_TO_UTIL=100  → **自動兩段式**：先跑一遍量出該組 util_avg，再把部位放大到「平均用滿 100%」
+#   ⚠️ 放大不是免費午餐：報酬與回撤一起放大，且超額部位要付融資利息（現金為負時）。
+# ── 大盤年線濾網（2026-10-28 新增，與實盤一致）───────────────────────────
+# 實盤買進前會檢查「加權指數是否在 MA200 之上」（core/market_filter.py，.env 的 MARKET_TREND_FILTER=true）；
+# 回測原本**沒有這條規則** ⇒ 2018／2022 空頭年的回測比實盤更差（實盤那段時間不會買）。
+# 這裡用 **MARKET_FILTER=1** 重現（刻意不用 MARKET_TREND_FILTER：.env 已設 true，
+# 直接沿用會讓所有既有回測靜默改變）。只擋買進，賣出照舊（與實盤相同）。
+# ── 閒置資金停泊（2026-10-28 新增）：`IDLE_CASH_ASSET=0050`
+# 為什麼：自選股腿常態有 40%~55% 的資金「等訊號／被年線擋住」而領 0% ⇒ 直接跟 0050（永遠滿倉）比不公平。
+# 設這個變數＝把「每天真正閒置的錢」（現金＋已分配但還沒買進的額度）改押在該標的上，
+# 需要買股票時自然釋出（等於母專案 45% ETF 的結構，但不需要融資）。
+# 口徑：每日把「閒置金額 × 該標的當日報酬 − 年化換手成本」記進現金（PARK_COST，預設 0.2%/年）；
+#       閒置金額每天重算 ⇒ 獲利自動滾入（複利）。
+IDLE_CASH_ASSET = os.getenv("IDLE_CASH_ASSET", "0050").strip()   # 預設停泊 0050；要關掉請設空字串
+PARK_COST = float(os.getenv("PARK_COST", "0.002"))     # 停泊部位的換手成本（年化）
+MARKET_FILTER = os.getenv("MARKET_FILTER", "0").strip().lower() in ("1", "true", "yes", "on")
+MF_WINDOW = int(os.getenv("MF_WINDOW", "200"))       # 年線視窗（交易日）
+LEVERAGE = max(0.0, float(os.getenv("LEVERAGE", "1")))
+SCALE_TO_UTIL = float(os.getenv("SCALE_TO_UTIL", "0"))       # 0=關；100=等效把平均曝險拉到 100%
+MARGIN_RATE = float(os.getenv("MARGIN_RATE", "0.06"))        # 年利率，只對負現金（融資）計息
 INITIAL = float(os.getenv("INITIAL", "500000"))
 DCA_MONTHLY = float(os.getenv("DCA_MONTHLY", "0"))  # >0 = 每月定額(方案一)；0 = 一筆資金(方案二/預設)
 MIN_PRICE = float(os.getenv("MIN_PRICE", "5"))
@@ -92,17 +193,19 @@ OH_RSI_TH = float(os.getenv("OH_RSI_TH", "80"))            # RSI(14) >此值＝�
 OH_DIST_WIN = int(os.getenv("OH_DIST_WIN", "63"))          # 距「N 日高」視窗
 OH_DIST_TH = float(os.getenv("OH_DIST_TH", "8"))           # 距 N 日高 ≤此%＝貼近高點(拒買)
 OH_ENTRY_MODE = os.getenv("OH_ENTRY_MODE", "both")         # any=任一命中拒買 / both=兩者都中才拒買(推薦, 較精準)
-HOT_EXIT_GROUPS = set(x.strip() for x in os.getenv("HOT_EXIT_GROUPS", "normal,megacap,stable").split(",") if x.strip())  # 對哪些組套用緊離場(高獲利/追強除外)
+HOT_EXIT_GROUPS = set(x.strip() for x in os.getenv("HOT_EXIT_GROUPS", "normal,megacap,stable").split(",") if x.strip())  # 對哪些組套用緊離場(高風險/追強除外)
 # ── 硬停損（2026-09-16 新增，評估用；預設 0=關閉＝基準行為）──
 # 為什麼：實盤沒有個股停損（出場只靠策略訊號），使用者問「怎麼沒有虧 10% 退場」。
 # 這裡提供對照組：`STOP_LOSS_PCT=10` = 收盤價 ≤ 成本 ×(1−10%) 即全部出場（日頻收盤口徑，與本檔一致）。
 # 規則本體在 core/backtest_rules.py（純函式、可獨立測試，不必匯入本檔的重型快取載入）。
-from core.backtest_rules import signal_strategy, stop_hit, stop_loss_env  # noqa: E402
+from core.backtest_rules import (signal_strategy, stop_hit, stop_loss_env, leverage_for_target,  # noqa: E402
+                                 above_ma200)
 
 STOP_LOSS_PCT = stop_loss_env("STOP_LOSS_PCT", 0.0)
+_MF_BLOCKED = [0]      # 大盤年線濾網累計擋下的買進次數（每次跑回測重設）
 
 GROUPS = {
-    "high_profit": {"label": "高獲利(高風險)", "strats": ["ma_cross", "breakout"]},
+    "high_profit": {"label": "高風險（高波動）", "strats": ["ma_cross", "breakout"]},
     "normal":      {"label": "正常",          "strats": ["bollinger", "ma_cross", "vwap", "breakout"]},
     "stable":      {"label": "高穩定(低風險)", "strats": ["bollinger", "vwap"]},
     "megacap":     {"label": "權值股動能", "strats": ["ma_cross", "breakout"]},
@@ -137,9 +240,16 @@ def load_data():
     global ALL_DATES
     global MONTH_STARTS
     global MONTH_START_SET
+    global SELECTION_MONTH_START_SET
+    global IDX_CLOSE, MF_SOURCE
+    global INDUSTRY, REV_ROWS
     # ── 載入資料 ─────────────────────────────────────────────
-    hist, _ = load_cache_or_raw("cache/inst_momentum/historical_shares.pkl")
-    union = sorted({k[0] for k in hist})
+    hist, _src = load_historical_shares()
+    print("歷史股本: {} 檔（{}）".format(len({k[0] for k in hist}), "+".join(_src)))
+    _extra = set(POOL_FIXED)
+    if IDLE_CASH_ASSET:
+        _extra.add(IDLE_CASH_ASSET)
+    union = sorted({k[0] for k in hist} | _extra)
     data = {}
     for sid in union:
         df = ssg.load_stock(sid)
@@ -158,6 +268,9 @@ def load_data():
         all_data_pool[sid] = d2
     pools = build_quarterly_pool(hist_for_pool, all_data_pool, top_n=POOL_N)
     print(f"逐季池: {len(pools)} 季點, 空池 {sum(1 for p in pools.values() if not p)}")
+    if POOL_FIXED:
+        _have = [s for s in POOL_FIXED if s in data]
+        print(f"⚠️ 固定名單模式（POOL_FIXED）: {len(_have)}/{len(POOL_FIXED)} 檔有價格資料 → {_have}")
 
     # 法人確認資料（可選）
     inst_conf = None
@@ -167,9 +280,12 @@ def load_data():
         INST_CONFDATES = sorted(pd.Timestamp(d) for d in inst_conf)
         print(f"法人確認啟用: {len(INST_CONFDATES)} 交易日, DAYS={INST_DAYS}")
 
-    # 全期交易日曆（取 0050 為基準，並涵蓋全部資料日）
+    # 全期交易日曆（2026-10-27 修：原本只看 0050；但 0050 快取可能只涵蓋近期
+    # （實測只從 2026-02-23 起、共 167 天）⇒ 2022-2025 的選股日 sel_date 全為 None、
+    # 整段回測 0 筆且不報錯。改成「所有標的日期的聯集」，0050 只當備援。）
     _mkt0full = ssg.load_stock("0050").dropna(subset=["close"])
-    FULLCAL = sorted(set(_mkt0full.index))          # 完整日曆（含 2022 前，供選股日查詢）
+    _all_days = sorted({d for df in data.values() for d in df.index})
+    FULLCAL = _all_days if len(_all_days) >= len(_mkt0full) else sorted(set(_mkt0full.index))
     _mkt0 = _mkt0full[(_mkt0full.index >= pd.Timestamp(START)) & (_mkt0full.index <= pd.Timestamp(END))]
     MASTER = sorted(set(_mkt0.index))
     ALL_DATES = sorted(set(
@@ -183,8 +299,60 @@ def load_data():
             MONTH_STARTS[ym] = d
     MONTH_START_SET = set(MONTH_STARTS.values())
 
+    # ── 產業對照（產業分散上限用）與月營收（營收成長因子用）──────────
+    INDUSTRY, REV_ROWS = {}, {}
+    if MAX_PER_SECTOR > 0:
+        try:
+            INDUSTRY, _ = load_cache_or_raw("cache/stock_industry.pkl")
+            INDUSTRY = INDUSTRY or {}
+            print(f"產業對照：{len(INDUSTRY)} 檔（每產業上限 {MAX_PER_SECTOR}）")
+        except Exception as e:
+            print(f"⚠️ 讀不到產業對照（{e}）⇒ MAX_PER_SECTOR 忽略")
+            INDUSTRY = {}
+    if FACTOR_REVENUE:
+        try:
+            from core.pit_data import load_revenue_rows
+            for sid in data:
+                rows = load_revenue_rows(sid, fetch=False)
+                if rows:
+                    REV_ROWS[sid] = rows
+            print(f"月營收快取：{len(REV_ROWS)} 檔（營收成長因子啟用）")
+        except Exception as e:
+            print(f"⚠️ 月營收快取讀取失敗（{e}）⇒ 關閉營收因子")
+
+    # ── 大盤指數序列（大盤年線濾網用）──────────────────────────
+    # 優先用 TWSE 加權指數快取（scripts/build_market_index.py 建立）；沒有就退回 0050 收盤當代理。
+    IDX_CLOSE, MF_SOURCE = None, None
+    try:
+        from core.cache_io import load_cache_or_raw as _lc
+        _idx, _ = _lc(os.path.join("cache", "market_index", "taiex.pkl"))
+        if _idx is not None and len(_idx) and "close" in _idx.columns:
+            IDX_CLOSE, MF_SOURCE = _idx["close"].astype(float), "TAIEX"
+    except Exception:
+        pass
+    if IDX_CLOSE is None:
+        IDX_CLOSE = _mkt0full["close"].astype(float)
+        MF_SOURCE = "0050（代理）"
+    if MARKET_FILTER:
+        print(f"大盤年線濾網: 啟用（來源 {MF_SOURCE}、MA{MF_WINDOW}、資料 {IDX_CLOSE.index.min().date()} ~ "
+              f"{IDX_CLOSE.index.max().date()}）")
+    else:
+        print(f"大盤年線濾網: 關閉（MARKET_FILTER=0；實盤 .env 的 MARKET_TREND_FILTER="
+              f"{os.getenv('MARKET_TREND_FILTER', '未設')} ⇒ 回測與實盤在此口徑不同）")
+
+    # ── 換股頻率：每 REBAL_MONTHS 個月才選股一次（REBAL_MONTHS=1 ⇒ 與舊行為完全相同）──
+    #   選股點 = 期間內「第 1、N+1、2N+1…」個月的月初交易日（不是日曆對齊到 1 月；
+    #   所以 START=2022-03-01、N=12 ⇒ 選股月＝2022-03、2023-03…）。
+    _ms_sorted = sorted(MONTH_STARTS.values())
+    SELECTION_MONTH_START_SET = set(_ms_sorted[::REBAL_MONTHS])
+    if REBAL_MONTHS > 1:
+        print(f"換股頻率: 每 {REBAL_MONTHS} 個月選股一次 → "
+              f"{len(SELECTION_MONTH_START_SET)} 個選股點（共 {len(_ms_sorted)} 個月）")
+
 
 def pool_for_date(d):
+    if POOL_FIXED:                      # 固定名單模式（評估用；沒有事後加碼/換股的空間）
+        return [s for s in POOL_FIXED if s in data]
     cand = [q for q in sorted(pools) if pd.Timestamp(q + "-01").to_period("M").end_time <= d]
     return pools[cand[-1]] if cand else []
 
@@ -440,6 +608,64 @@ def entry_overheat(sid, d):
 
 
 # ── 三組選股規則 ─────────────────────────────────────────
+_FILL_STATS = {"months": 0, "month_short": 0, "names_added": 0}
+
+
+def _fallback_rank(pool, sel_date):
+    """補滿用的備援排序：**同一池**，以 63 日動能排序（不看過熱/法人/MA20），排除資料不足者。
+
+    為什麼需要它（2026-10-29 實測）：`ssg.score_stock()` 在「跌破 MA20」或流動性不足時**回傳 None**
+    ⇒ 有些月份整個池子一檔都打不出分數（例 2023-11 全部 None、最後只選出 2 檔），
+    這時只放寬「過熱／法人」濾網仍然補不滿 ⇒ 必須有第二層備援排序。
+    """
+    out = []
+    for sid in pool:
+        df = data.get(sid)
+        if df is None:
+            continue
+        sd = snap(df, sel_date)
+        if sd is None or sd not in df.index:
+            continue
+        r = trailing_ret(df, sd, MOM_DAYS)
+        if r is None:
+            continue
+        out.append((sid, r))
+    out.sort(key=lambda x: -x[1])
+    return [s for s, _ in out]
+
+
+def _fill(ranked, pool=None, sel_date=None, top_n=None):
+    """把「嚴格通過濾網」的清單補到 N 檔（`FILL_MODE=topup`）。
+
+    `ranked`：`[(sid, score, strict_ok)]`，已依分數排好序。
+    - `proportional`：只回傳 strict_ok 的前 N 檔（＝現況：可能少於 N，資金平均分給這幾檔）。
+    - `topup`：strict 不足 N 時，先依分數順序補「被過熱／法人擋掉」的，
+      仍不足再依 `_fallback_rank()`（63 日動能）補滿。
+    回傳 `(list_of_sids, n_topped_up)`。
+    """
+    n = TOP_N if top_n is None else int(top_n)
+    strict = [sid for sid, _s, ok in ranked if ok][:n]
+    _FILL_STATS["months"] += 1
+    if len(strict) < n:
+        _FILL_STATS["month_short"] += 1
+    if FILL_MODE != "topup" or len(strict) >= n:
+        return strict, 0
+    out = list(strict)
+    for sid, _score, ok in ranked:
+        if len(out) >= n:
+            break
+        if not ok and sid not in out:
+            out.append(sid)
+    if len(out) < n and pool is not None and sel_date is not None:
+        for sid in _fallback_rank(pool, sel_date):
+            if len(out) >= n:
+                break
+            if sid not in out:
+                out.append(sid)
+    _FILL_STATS["names_added"] += len(out) - len(strict)
+    return out, len(out) - len(strict)
+
+
 def pick_high_profit(pool, sel_date):
     cands = []
     for sid in pool:
@@ -456,16 +682,81 @@ def pick_high_profit(pool, sel_date):
         mp = ma_pos(df, sd, 20)
         if r is None or mp is None or mp < 0:
             continue
-        if not inst_ok(sid, sel_date):
-            continue
-        if overheated(sid, sel_date):   # 人工降溫：過熱 → 剔除
-            continue
-        cands.append((sid, r))
+        ok = inst_ok(sid, sel_date) and not overheated(sid, sel_date)
+        cands.append((sid, r, ok))
     cands.sort(key=lambda x: -x[1])
-    return [s for s, _ in cands[:TOP_N]]
+    return _fill(cands, pool, sel_date)[0]
+
+
+def _ai_picks_for(sel_date):
+    """取 AI 名單：封包的 `as_of` 是「當月第 1 個交易日」，而引擎的 `sel_date` 是它前一個交易日
+    ⇒ 用「≥ sel_date 的最近一個 key（10 天內）」對應。"""
+    import bisect
+
+    key = str(sel_date)[:10]
+    if key in _AI_PICKS:
+        return _AI_PICKS[key]
+    i = bisect.bisect_left(_AI_KEYS, key)
+    if i < len(_AI_KEYS):
+        cand = _AI_KEYS[i]
+        if (pd.Timestamp(cand) - pd.Timestamp(key)).days <= 10:
+            return _AI_PICKS[cand]
+    return None
+
+
+def _zscore_rows(pool, sel_date):
+    """收集 z 分數模型需要的欄位（只用 ≤ sel_date 的資料）。"""
+    rows = []
+    for sid in pool:
+        df = data.get(sid)
+        if df is None:
+            continue
+        sd = snap(df, sel_date)
+        if sd is None or sd not in df.index:
+            continue
+        per = _oh_get_per(sid, sd)
+        idx = df.index.get_loc(sd)
+        win = df.iloc[max(0, idx - 251):idx + 1]
+        hi = float(win["high"].max())
+        cp = float(df.loc[sd, "close"])
+        rev = None
+        if FACTOR_REVENUE and REV_ROWS.get(sid):
+            try:
+                from core.pit_data import revenue_pack
+                _rp = revenue_pack(REV_ROWS[sid], sd)
+                if _rp.get("available") and _rp["items"]:
+                    rev = _rp["items"][-1].get("yoy")
+            except Exception:
+                rev = None
+        rows.append({"sid": sid, "per": per, "rev": rev,
+                     "r63": trailing_ret(df, sd, 63), "r20": trailing_ret(df, sd, 20),
+                     "dist": (cp / hi - 1.0) if hi > 0 else None})
+    return rows
+
+
+def _zscore_picks(pool, sel_date):
+    """`SCORING_MODEL=zscore` 的排序（共用 `core.scoring`；回傳 `[(sid, score, True)]`）。
+
+    可選：`FACTOR_REVENUE=1` 加入月營收 YoY 因子、`MAX_PER_SECTOR>0` 套用產業分散上限。
+    """
+    from core.scoring import apply_sector_cap, score_rows
+
+    ranked = score_rows(_zscore_rows(pool, sel_date), use_revenue=FACTOR_REVENUE)
+    if MAX_PER_SECTOR > 0 and INDUSTRY:
+        capped = apply_sector_cap(ranked, INDUSTRY, MAX_PER_SECTOR)     # 依原順序、超過上限者剔除
+        pos = {sid: i for i, (sid, _s) in enumerate(ranked)}
+        ranked = [(sid, pos[sid]) for sid in capped]                     # 分數位置保留（只影響取前 N）
+    return [(sid, sc, True) for sid, sc in ranked]
 
 
 def pick_normal(pool, sel_date):
+    _ai = _ai_picks_for(sel_date)
+    if _ai:
+        ok = [s for s in _ai if s in data and snap(data[s], sel_date) is not None]
+        if ok:
+            return ok[:TOP_N]
+    if SCORING_MODEL == "zscore":
+        return _fill(_zscore_picks(pool, sel_date), pool, sel_date)[0]
     scored = []
     for sid in pool:
         df = data.get(sid)
@@ -474,16 +765,13 @@ def pick_normal(pool, sel_date):
         sd = snap(df, sel_date)
         if sd is None or sd not in df.index:
             continue
-        if not inst_ok(sid, sel_date):
-            continue
         s = ssg.score_stock(sid, df, sd, dict(ssg.DEFAULT_PARAMS))
         if s is None:
             continue
-        if overheated(sid, sel_date):   # 人工降溫：過熱 → 剔除
-            continue
-        scored.append(s)
-    scored.sort(key=lambda x: -x["total"])
-    return [s["symbol"] for s in scored[:TOP_N]]
+        ok = inst_ok(sid, sel_date) and not overheated(sid, sel_date)
+        scored.append((s["symbol"], float(s.get("total") or 0), ok))
+    scored.sort(key=lambda x: -x[1])
+    return _fill(scored, pool, sel_date)[0]
 
 
 def pick_stable(pool, sel_date):
@@ -502,11 +790,10 @@ def pick_stable(pool, sel_date):
         mp200 = ma_pos(df, sd, 200)
         if v is None or mp200 is None or mp200 < 0:
             continue
-        if not inst_ok(sid, sel_date):
-            continue
-        cands.append((sid, v))
+        ok = inst_ok(sid, sel_date)
+        cands.append((sid, v, ok))
     cands.sort(key=lambda x: x[1])
-    return [s for s, _ in cands[:TOP_N]]
+    return _fill(cands, pool, sel_date)[0]
 
 
 def pick_megacap_momentum(pool, sel_date):
@@ -527,13 +814,10 @@ def pick_megacap_momentum(pool, sel_date):
         mp = ma_pos(df, sd, 20)
         if r is None or mp is None or mp < 0:
             continue
-        if not inst_ok(sid, sel_date):
-            continue
-        if overheated(sid, sel_date):
-            continue
-        cands.append((sid, r))
+        ok = inst_ok(sid, sel_date) and not overheated(sid, sel_date)
+        cands.append((sid, r, ok))
     cands.sort(key=lambda x: -x[1])
-    return [s for s, _ in cands[:TOP_N]]
+    return _fill(cands, pool, sel_date)[0]
 
 
 PICKERS = {"high_profit": pick_high_profit, "normal": pick_normal, "stable": pick_stable,
@@ -602,7 +886,24 @@ def sell_net(proceeds, sid):
     return proceeds * (1 - COMMISSION - ssg.tax_rate(sid))
 
 
-def run_group(gkey):
+def buy_allowed(dts):
+    """大盤年線濾網的買進守門（與實盤 `MARKET_TREND_FILTER` 同義）：回 False = 這筆不買。
+
+    只有 MARKET_FILTER=1 時才有作用；資料不足 MA 視窗時不擋（與實盤「資料不足→跳過過濾」一致）。
+    只在「本來就要買」的呼叫點被呼叫，所以計數＝被擋下的買進次數。
+    """
+    if not MARKET_FILTER:
+        return True
+    if above_ma200(IDX_CLOSE, dts, MF_WINDOW) is False:
+        _MF_BLOCKED[0] += 1
+        return False
+    return True
+
+
+def run_group(gkey, leverage=None):
+    lev = LEVERAGE if leverage is None else max(0.0, float(leverage))   # 部位放大倍數（1=不放大）
+    _MF_BLOCKED[0] = 0                                                  # 每組重新計數
+    _FILL_STATS.update({"months": 0, "month_short": 0, "names_added": 0})
     cash = 0.0 if DCA_MONTHLY > 0 else INITIAL   # DCA：空手起、每月投入；一筆：INITIAL
     deposited = 0.0                               # 已投入總額（DCA 用）
     positions = {}   # sid -> {'strat': s, 'shares': float}
@@ -615,9 +916,15 @@ def run_group(gkey):
     deployed_hist = {}   # dts -> 實際投入在「持股」的資金（shares × 價）
     alloc_hist = {}      # dts -> 分配到「股票桶」的資金（bucket + 持股）＝已承諾但尚未全買
     stop_count = [0]     # 硬停損觸發次數（STOP_LOSS_PCT>0 時才有意義）
+    park_prev = [0.0]    # 前一日停泊金額（閒置資金押 IDLE_CASH_ASSET 用）
+    _PARK_PREV_DATE = [None]   # 停泊報酬結算所用的前一日（交易日）
+    park_hist = {}       # dts -> 當日停泊金額（供報告利用率）
+
+    def debt_total():
+        return sum(p.get("debt", 0.0) for p in positions.values())
 
     def equity(dts):
-        e = cash + sum(bucket.values())
+        e = cash + sum(bucket.values()) - debt_total()   # 扣掉融資部位（LEVERAGE>1 時才有）
         for sid, p in positions.items():
             if p["shares"] > 0:
                 e += p["shares"] * close_at(sid, dts)
@@ -626,16 +933,30 @@ def run_group(gkey):
     for d in ALL_DATES:
         dts = pd.Timestamp(d)
 
+        # 閒置資金停泊結算（用「昨日停泊金額 × 今日報酬」記進現金；報酬來自停泊標的的收盤序列）
+        if IDLE_CASH_ASSET and park_prev[0] > 0:
+            _d0 = _PARK_PREV_DATE[0] or dts
+            _pp, _pn = close_at(IDLE_CASH_ASSET, _d0), close_at(IDLE_CASH_ASSET, dts)
+            if _pp and _pn and _pp > 0:
+                cash += park_prev[0] * (_pn / _pp - 1.0 - PARK_COST / 252.0)
+            _PARK_PREV_DATE[0] = dts
+
         # 日初權益（供股災防護回撤評估）
         eq0 = equity(dts)
         peak = max(peak, eq0)
 
-        # ── 每月選股事件（月初第一個交易日）──
-        if dts in MONTH_START_SET:
-            # DCA：每月定額投入現金池（在選股分配前）
-            if DCA_MONTHLY > 0:
-                cash += DCA_MONTHLY
-                deposited += DCA_MONTHLY
+        # 融資利息（只有 LEVERAGE>1 才會產生負債；年利率 MARGIN_RATE，日計息）
+        _dt = debt_total()
+        if MARGIN_RATE > 0 and _dt > 0:
+            cash -= _dt * MARGIN_RATE / 252.0
+
+        # ── 每月月初：DCA 定額投入（與換股頻率無關，每月都投）──
+        if dts in MONTH_START_SET and DCA_MONTHLY > 0:
+            cash += DCA_MONTHLY
+            deposited += DCA_MONTHLY
+
+        # ── 換股事件（每 REBAL_MONTHS 個月一次；REBAL_MONTHS=1 ＝每個月初，即舊行為）──
+        if dts in SELECTION_MONTH_START_SET:
             # 股災防護：選股日總回撤 > MIN_DRAW_BACK% 時「最多延長一輪」續抱未換。
             # 邏輯同原版 backtest_selector：首次觸發才延長(extended_once)，下輪恢復正常換倉。
             skip = False
@@ -667,7 +988,9 @@ def run_group(gkey):
                             sh = positions[sid]["shares"]
                             px = close_at(sid, dts)
                             if sh > 0 and px > 0:
-                                bucket[sid] = bucket.get(sid, 0) + sell_net(sh * px, sid)
+                                # 換出時同樣要先還融資（否則借來的錢會經 bucket 流回現金，槓桿失控）
+                                bucket[sid] = (bucket.get(sid, 0) + sell_net(sh * px, sid)
+                                               - positions[sid].get("debt", 0.0))
                             cash += bucket.pop(sid, 0.0)
                             del positions[sid]
                 else:  # addonly (C)
@@ -699,17 +1022,20 @@ def run_group(gkey):
                         _oh = overheat_flags(sid, sel_date)
                         _hot = _hot_exit and bool(_oh and _oh["count"] >= HOT_THRESHOLD)
                         positions[sid] = {"strat": _st, "shares": 0.0, "hot": _hot,
-                                          "entry": 0.0, "peak": 0.0}
+                                          "entry": 0.0, "peak": 0.0, "debt": 0.0}
                         bucket[sid] = alloc
                         cash -= alloc
                         # EXEC=immediate(A)：選股日立即買滿；EXEC=signal(B, 自選股=等訊號)：留空倉等進場訊號(由下方逐日訊號買進)
-                        if (EXEC != "signal") and (px > 0) and (bucket[sid] > 5):
+                        if ((EXEC != "signal") and (px > 0) and (bucket[sid] > 5)
+                                and buy_allowed(dts)):
                             budget = bucket[sid]
-                            bought = buy_cost(budget, px)
+                            notional = budget * lev      # 利用率等效放大（LEVERAGE／SCALE_TO_UTIL）
+                            bought = buy_cost(notional, px)
                             positions[sid]["shares"] = bought / px
+                            positions[sid]["debt"] = max(0.0, notional - budget)   # 融資金額
                             positions[sid]["entry"] = px
                             positions[sid]["peak"] = px
-                            bucket[sid] = 0.0
+                            bucket[sid] = max(0.0, budget - notional)   # lev<1 時未用完的額度
 
             # 記錄實際持有（代號＋策略）
             selection_log[-1]["holdings"] = [
@@ -740,7 +1066,11 @@ def run_group(gkey):
                     do_sell = True
             if do_sell and sh > 0:
                 proceeds = sell_net(sh * px, sid)
-                bucket[sid] = bucket.get(sid, 0.0) + proceeds
+                _debt = positions[sid].get("debt", 0.0)
+                # ⚠️ 融資要從「這筆部位的回款」扣掉（不是記回 bucket），否則下一輪買進會把
+                #    借來的錢當自有資金再放大一次 ⇒ 槓桿隨回合數指數成長（2026-10-28 踩過）。
+                bucket[sid] = bucket.get(sid, 0.0) + proceeds - _debt
+                positions[sid]["debt"] = 0.0
                 positions[sid]["shares"] = 0.0
                 # 2026-09-22 對齊實盤：賣出（部位歸零）要**釋放 auto 鎖定**，
                 #   下次進場重新路由（實盤 AUTO_FIXED_CACHE.pop；2006 實例：ma_cross 賣 → breakout 買回）。
@@ -749,12 +1079,16 @@ def run_group(gkey):
             elif sh == 0 and sig == 1 and bucket.get(sid, 0.0) > 5:
                 if entry_overheat(sid, dts):
                     continue   # 過熱拒買（策略訊號在、但買入當下過熱(RSI超買/距高點近)）
+                if not buy_allowed(dts):
+                    continue   # 大盤在年線下 → 不買（訊號還在就之後再說）
                 budget = bucket[sid]
-                bought = buy_cost(budget, px)
+                notional = budget * lev                      # 利用率等效放大
+                bought = buy_cost(notional, px)
                 positions[sid]["shares"] = bought / px
+                positions[sid]["debt"] = max(0.0, notional - budget)   # 融資金額
                 positions[sid]["entry"] = px
                 positions[sid]["peak"] = px
-                bucket[sid] = 0.0
+                bucket[sid] = max(0.0, budget - notional)
                 if positions[sid]["strat"] is None:
                     # **進場當下鎖定**（這一輪用來產生買訊的策略）——與實盤買入即鎖定一致
                     positions[sid]["strat"] = _st_today
@@ -764,6 +1098,11 @@ def run_group(gkey):
         _inv = sum(p["shares"] * close_at(sid, dts) for sid, p in positions.items() if p["shares"] > 0)
         deployed_hist[dts] = _inv
         alloc_hist[dts] = _inv + sum(bucket.values())
+        if IDLE_CASH_ASSET:
+            _idle = equity(dts) - _inv                     # 現金＋已分配未買的額度
+            park_hist[dts] = max(0.0, _idle)
+            park_prev[0] = max(0.0, _idle)
+            _PARK_PREV_DATE[0] = dts
 
     curve = pd.Series(curve).sort_index()
     _avg_inv = (pd.Series(deployed_hist).mean() if deployed_hist else 0.0)
@@ -789,6 +1128,15 @@ def run_group(gkey):
     _util_peak_d = (max(deployed_hist, key=lambda d: deployed_hist[d] / curve[d])
                     if _ratios else None)
     return {"curve": curve, "final": curve.iloc[-1] if len(curve) else cash,
+            "deployed_series": pd.Series(deployed_hist).sort_index(),
+            "allocated_series": pd.Series(alloc_hist).sort_index(),
+            "leverage": lev,
+            "mf_blocked": _MF_BLOCKED[0],
+            "park_avg": round(float(pd.Series(park_hist).mean())) if park_hist else 0,
+            "util_total_avg": (round(float(sum(
+                (deployed_hist[d] + park_hist.get(d, 0.0)) / curve[d]
+                for d in deployed_hist if d in curve.index and curve[d] > 0)) / max(1, len(deployed_hist)), 4)
+                if (IDLE_CASH_ASSET and deployed_hist) else None),
             "deposited": deposited, "selection_log": selection_log,
             "avg_deployed": round(float(_avg_inv)),
             "avg_allocated": round(float(_avg_alloc)),
@@ -868,6 +1216,29 @@ def main():
     for gkey in gkeys:
         meta = GROUPS[gkey]
         res = run_group(gkey)
+        if SCALE_TO_UTIL > 0:
+            # 多段式：用上一段量到的 util_avg 反推倍數，逐步逼近「平均曝險 = SCALE_TO_UTIL%」。
+            # （util 對 L 不是嚴格線性：融資部位的損益也會改變權益 ⇒ 一次通常差幾個 %，迭代到 2% 內）
+            _raw_util, _raw_final = res.get("util_avg"), res.get("final")
+            _lev = leverage_for_target(_raw_util, SCALE_TO_UTIL)
+            _tries = 0
+            while _lev > 1.0 and _tries < 3:
+                res = run_group(gkey, leverage=_lev)
+                _tries += 1
+                _u = res.get("util_avg") or 0.0
+                if abs(_u - SCALE_TO_UTIL / 100.0) <= 0.02:
+                    break
+                _nudged = _lev * (SCALE_TO_UTIL / 100.0) / _u if _u > 0 else _lev
+                if _nudged <= 1.0 or abs(_nudged - _lev) / _lev < 0.005:
+                    break
+                _lev = min(_nudged, 5.0)
+            if _tries:
+                print(f"  🔧 等效 {SCALE_TO_UTIL:g}% 利用率：LEVERAGE={_lev:.3f}（迭代 {_tries} 次）"
+                      f"｜原 util {(_raw_util or 0):.1%}／終值 NT${(_raw_final or 0):,.0f}"
+                      f" → 放大後 util {res.get('util_avg', 0):.1%}／NT${res.get('final', 0):,.0f}"
+                      f"（融資年息 {MARGIN_RATE:.1%}）")
+            else:
+                print(f"  🔧 等效 {SCALE_TO_UTIL:g}% 利用率：原 util 已 >= 目標，不放大")
         curve = res["curve"]
         years = (pd.Timestamp(END) - pd.Timestamp(START)).days / 365.25
         base = res["deposited"] if DCA_MONTHLY > 0 else INITIAL   # DCA 用已投入總額；一筆用 INITIAL
@@ -889,6 +1260,10 @@ def main():
             "util_p50": res.get("util_p50"), "util_p90": res.get("util_p90"),
             "util_peak": res.get("util_peak"),                  # **尖峰曝險比例（÷當下權益）**
             "util_peak_date": res.get("util_peak_date"),
+            "leverage": res.get("leverage", LEVERAGE),          # 部位放大倍數（1=未放大）
+            "mf_blocked": res.get("mf_blocked", 0),             # 大盤年線濾網擋下的買進次數
+            "park_avg": res.get("park_avg", 0),                 # 平均停泊金額（IDLE_CASH_ASSET）
+            "util_total_avg": res.get("util_total_avg"),        # **總曝險**（股票＋停泊）÷ 權益
             "avg_allocated": res["avg_allocated"],    # 平均分配到股票桶的資金（含空等訊號）
             "stop_loss_pct": STOP_LOSS_PCT,           # 本次回測的硬停損設定（0=關）
             "stop_count": res.get("stop_count", 0),   # 硬停損觸發次數
@@ -907,8 +1282,29 @@ def main():
         # 檔名含口徑（EXEC／DCA／鎖定時點）——2026-09-22 補：只帶窗口的話，
         #   同窗口的 signal 與 immediate 會互相覆蓋（實際發生：混合分析差點混到 A 的曲線）。
         _suffix = f"{EXEC}" + (f"_dca{DCA_MONTHLY:g}" if DCA_MONTHLY > 0 else "") \
-                  + ("" if LOCK_AT == "fill" else f"_{LOCK_AT}")
+                  + ("" if LOCK_AT == "fill" else f"_{LOCK_AT}") \
+                  + (f"_rebal{REBAL_MONTHS}" if REBAL_MONTHS > 1 else "") \
+                  + (f"_top{TOP_N}" if TOP_N != 5 else "") \
+                  + (f"_fixed{len(POOL_FIXED)}" if POOL_FIXED else "") \
+                  + (f"_lev{LEVERAGE:g}" if LEVERAGE != 1 else "") \
+                  + (f"_scale{SCALE_TO_UTIL:g}" if SCALE_TO_UTIL > 0 else "") \
+                  + (f"_mf{MF_WINDOW}" if MARKET_FILTER else "") \
+                  + (f"_park{IDLE_CASH_ASSET}" if IDLE_CASH_ASSET else "") \
+                  + (f"_fill{FILL_MODE}" if FILL_MODE != "proportional" else "") \
+                   + (f"_score{SCORING_MODEL}" if SCORING_MODEL != "legacy" else "") \
+                   + ("_norev" if (SCORING_MODEL == "zscore" and not FACTOR_REVENUE) else "") \
+                   + (f"_sec{MAX_PER_SECTOR}" if MAX_PER_SECTOR > 0 else "") \
+                   + ("" if include_delisted() else "_surv") \
+                   + (f"_pool{POOL_N}" if POOL_N != 50 else "")
         curve.to_csv(f"results/daily_{gkey}_{START}_{END}_{_suffix}.csv")
+        # 每日曝險明細（equity / 持股市值 / 已分配額度）——「閒置資金押 0050」的合成需要它
+        try:
+            pd.DataFrame({"equity": curve,
+                          "deployed": res.get("deployed_series"),
+                          "allocated": res.get("allocated_series")}).to_csv(
+                f"results/exposure_{gkey}_{START}_{END}_{_suffix}.csv")
+        except Exception as _e:
+            print(f"⚠️ 曝險明細匯出失敗（不影響回測）：{_e}")
         # 舊檔名（不含口徑）只為「已文件化的 canonical 基線」保留：2015-2025 + signal + fill + 單筆
         if (START, END) == ("2015-01-01", "2025-12-31") and _suffix == "signal":
             curve.to_csv(f"results/daily_{gkey}_{_mode}.csv")
@@ -926,6 +1322,17 @@ def main():
               f" ← 這才是回答「要準備多少資金」的數字（T+2 淨額交割下現金需求更低）")
         if STOP_LOSS_PCT > 0:
             print(f"  硬停損 −{STOP_LOSS_PCT:g}%：觸發 {res.get('stop_count', 0)} 次")
+        if MARKET_FILTER:
+            print(f"  大盤年線濾網（{MF_SOURCE}、MA{MF_WINDOW}）：擋下 {res.get('mf_blocked', 0)} 次買進")
+        if FILL_MODE == "topup":
+            print(f"  補滿模式（放寬過熱／法人＋63 日動能）：{_FILL_STATS['month_short']}/{_FILL_STATS['months']} 次選股"
+                  f"本來不足 N 檔，共補進 {_FILL_STATS['names_added']} 檔")
+        elif _FILL_STATS["month_short"]:
+            print(f"  比例模式：{_FILL_STATS['month_short']}/{_FILL_STATS['months']} 次選股不足 N 檔"
+                  f"（資金平均分配給選出的檔數）")
+        if IDLE_CASH_ASSET:
+            print(f"  閒置停泊（{IDLE_CASH_ASSET}）：平均停泊 NT${res.get('park_avg', 0):,.0f}"
+                  f"｜總曝險（股票＋停泊）平均 {res.get('util_total_avg') or 0:.1%}")
         if DCA_MONTHLY == 0:
             print("  年度:", {k: f"{v:+.2%}" for k, v in yearly(curve).items()})
 
@@ -940,15 +1347,19 @@ def main():
                       "total_return": round(b_total, 4), "annualized": round(b_ann, 4)}
     else:
         bench = benchmark()
-        b_total = bench.iloc[-1] / INITIAL - 1
-        b_ann = (bench.iloc[-1] / INITIAL) ** (1 / years) - 1
-        bp = perf(bench) or {}
-        print(f"\n[0050 買進持有] NT${INITIAL:,.0f} → NT${bench.iloc[-1]:,.0f}  "
-              f"總報酬 {b_total:+.2%} 年化 {b_ann:+.2%} MDD {bp.get('mdd', float('nan')):.2%} "
-              f"夏普 {bp.get('sharpe', float('nan')):.2f}")
-        bench_meta = {"final_value": round(bench.iloc[-1]), "total_return": round(b_total, 4),
-                      "annualized": round(b_ann, 4), "sharpe": round(bp.get("sharpe", float("nan")), 2),
-                      "max_drawdown": round(bp.get("mdd", float("nan")), 4)}
+        if len(bench) == 0:
+            print("\n[0050 買進持有] 略過：0050 快取沒有涵蓋本次回測期間（基準無法計算）")
+            bench_meta = None
+        else:
+            b_total = bench.iloc[-1] / INITIAL - 1
+            b_ann = (bench.iloc[-1] / INITIAL) ** (1 / years) - 1
+            bp = perf(bench) or {}
+            print(f"\n[0050 買進持有] NT${INITIAL:,.0f} → NT${bench.iloc[-1]:,.0f}  "
+                  f"總報酬 {b_total:+.2%} 年化 {b_ann:+.2%} MDD {bp.get('mdd', float('nan')):.2%} "
+                  f"夏普 {bp.get('sharpe', float('nan')):.2f}")
+            bench_meta = {"final_value": round(bench.iloc[-1]), "total_return": round(b_total, 4),
+                          "annualized": round(b_ann, 4), "sharpe": round(bp.get("sharpe", float("nan")), 2),
+                          "max_drawdown": round(bp.get("mdd", float("nan")), 4)}
 
     if OH_USE_PER:
         print(f"\n[PER 快取] 完全查不到 PER {_OH_PER_MISS['n']} 次、"
@@ -958,7 +1369,13 @@ def main():
            "overheat_use_per": OH_USE_PER, "lock_at": LOCK_AT,
            "per_miss": _OH_PER_MISS["n"] if OH_USE_PER else 0,
            "per_stale": _OH_PER_STALE["n"] if OH_USE_PER else 0,
-           "pool_n": POOL_N, "top_n": TOP_N,
+           "pool_n": POOL_N, "top_n": TOP_N, "rebal_months": REBAL_MONTHS, "fill_mode": FILL_MODE,
+           "scoring_model": SCORING_MODEL, "factor_revenue": FACTOR_REVENUE,
+           "max_per_sector": MAX_PER_SECTOR,
+           "pool_fixed": POOL_FIXED or None,
+           "leverage": LEVERAGE, "scale_to_util": SCALE_TO_UTIL, "margin_rate": MARGIN_RATE,
+           "market_filter": MARKET_FILTER, "mf_window": MF_WINDOW, "mf_source": MF_SOURCE,
+           "idle_cash_asset": IDLE_CASH_ASSET or None, "park_cost": PARK_COST,
            "momentum_days": MOM_DAYS, "inst_confirm": INST_CONFIRM, "inst_days": INST_DAYS,
            "min_draw_back": MIN_DRAW_BACK, "strat_mode": STRAT_MODE, "swap_mode": SWAP_MODE,
            "overheat": OVERHEAT, "oh_max_from_high": OH_MAX_FROM_HIGH, "oh_max_ytd": OH_MAX_YTD,
@@ -971,7 +1388,20 @@ def main():
     # 2026-09-21：另存**窗口／口徑專屬**檔名，避免「同一個檔名被不同窗口覆蓋」導致事後無法覆核
     #   （`plan2_monthly_3group.json` 保留為最新一次執行的通用檔）。
     _tag = f"{START}_{END}_{EXEC}" + (f"_dca{DCA_MONTHLY:g}" if DCA_MONTHLY > 0 else "") \
-           + ("" if LOCK_AT == "fill" else f"_{LOCK_AT}")
+           + ("" if LOCK_AT == "fill" else f"_{LOCK_AT}") \
+           + (f"_rebal{REBAL_MONTHS}" if REBAL_MONTHS > 1 else "") \
+           + (f"_top{TOP_N}" if TOP_N != 5 else "") \
+           + (f"_fixed{len(POOL_FIXED)}" if POOL_FIXED else "") \
+           + (f"_lev{LEVERAGE:g}" if LEVERAGE != 1 else "") \
+           + (f"_scale{SCALE_TO_UTIL:g}" if SCALE_TO_UTIL > 0 else "") \
+           + (f"_mf{MF_WINDOW}" if MARKET_FILTER else "") \
+           + (f"_park{IDLE_CASH_ASSET}" if IDLE_CASH_ASSET else "") \
+           + (f"_fill{FILL_MODE}" if FILL_MODE != "proportional" else "") \
+           + (f"_score{SCORING_MODEL}" if SCORING_MODEL != "legacy" else "") \
+           + ("_norev" if (SCORING_MODEL == "zscore" and not FACTOR_REVENUE) else "") \
+           + (f"_sec{MAX_PER_SECTOR}" if MAX_PER_SECTOR > 0 else "") \
+           + ("" if include_delisted() else "_surv") \
+           + (f"_pool{POOL_N}" if POOL_N != 50 else "")
     _out_path = f"results/plan2_monthly_3group_{_tag}.json"
     with open(_out_path, "w", encoding="utf-8") as f:
         _json.dump(out, f, ensure_ascii=False, indent=2)

@@ -11,7 +11,7 @@
   ⇒ **實盤做了回測不會做的交易**，績效不可比。
 
 修法：日K策略（bollinger/vwap/ma_cross/breakout/auto）只在**收盤前窗口**（預設 13:25 起、交易時段到 13:30）
-判定與下單；`keep_wait`（全輪替腿，分鐘級補足/停利機制）**不受影響**。
+判定與下單；`keep_wait`（另一條腿，分鐘級補足/停利機制）**不受影響**。
 """
 import ast
 import os
@@ -71,7 +71,7 @@ class TestLoopGating(unittest.TestCase):
             self.assertTrue(
                 'if (sn != \'keep_wait\') and (not _close_order_window):' in src,
                 f'{rel}: 日K策略必須在非下單窗口時跳過（否則又會盤中即時下單、與回測不同口徑）')
-            # keep_wait 必須被排除在閘門之外（全輪替腿是分鐘級機制，不受本次對齊影響）
+            # keep_wait 必須被排除在閘門之外（該腿是分鐘級機制，不受本次對齊影響）
             self.assertTrue("sn != 'keep_wait'" in src, f'{rel}: 閘門需明確排除 keep_wait')
 
     def test_skip_happens_after_history_update(self):

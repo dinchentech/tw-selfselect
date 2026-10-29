@@ -232,7 +232,7 @@ class TestPandasImpact(MigrationFixture):
 
     def test_exclude_daily_exclusion_requires_the_column(self):
         """`RiskManager._load_today_trades` 靠 `'exclude_daily' in df.columns` 判斷
-        —— 欄位不存在時，全輪替排除每日額度的功能**靜默失效**（VM 實況就是如此）。"""
+        —— 欄位不存在時，批次換股排除每日額度的功能**靜默失效**（VM 實況就是如此）。"""
         import pandas as pd
         self.write(MIXED)
         self.assertNotIn("exclude_daily", pd.read_csv(self.path, on_bad_lines="skip").columns)

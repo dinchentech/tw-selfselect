@@ -4,7 +4,7 @@
 ## 為什麼需要它
 
 tw-autotrader 的 `.env` 有 `ROTATE_*`／`INST_MOM_*`／`MODELC_*` 這些舊腿設定，
-還有 8 條 `PC_`（3 檔 keep_wait＋5 檔 auto，全輪替腿＋自選股腿的混合）。
+還有 8 條 `PC_`（3 檔 keep_wait＋5 檔 auto 的混合）。
 tw-selfselect 只認 `.env.example.txt` 那套（`SELFSELECT_*`），直接複製會帶著一堆
 無效鍵與錯誤名單。**把 secrets 留在 VM 上轉換**，本機不需要也不應該持有這些值。
 
@@ -32,7 +32,7 @@ python3 scripts/make_selfselect_env.py \
     --dest    ~/tw-selfselect/.env            # 預設 dry-run，不寫檔
 python3 scripts/make_selfselect_env.py ... --write   # 真的寫（0600 權限）
 
-# 想連同舊 PC_ 名單一起帶（不建議；那是全輪替時代的名單）
+# 想連同舊 PC_ 名單一起帶（不建議；那是母專案時期的舊名單）
 python3 scripts/make_selfselect_env.py ... --keep-portfolio --write
 ```
 """

@@ -3,7 +3,7 @@ type: project_topic
 status: active
 summary: "總資產三個口徑（A 現金流／B 儀表板／C CSV 自洽）的代數關係、三本帳不一致的偵測與修帳工具，以及 2026-09 帳務缺口事故"
 tags: [帳務, 對帳, 總資產, 三本帳, 事故]
-contains: [背景, 當前結論, 實踐指南, 教訓, 開放問題]
+contains: [experience, procedure, lesson, open_question]
 created: "2026-10-26"
 updated: "2026-10-26"
 related: [environment-scope.md, backtest-data-pitfalls.md]

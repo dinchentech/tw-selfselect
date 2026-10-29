@@ -40,7 +40,7 @@ class TestPickerWiring(unittest.TestCase):
         src = (ROOT / "scripts" / "monthly_rebalance_picker.py").read_text(encoding="utf-8")
         self.assertIn("cap_new_picks(", src)
         self.assertIn("--no-cap", src)
-        # 只算本腿持股：不可把 keep_wait（全輪替腿）算進 N
+        # 只算本腿持股：不可把 keep_wait（另一條腿）算進 N
         self.assertIn('current.get(s, {}).get("strategy") != "keep_wait"', src)
 
     def test_docs_mention_total_cap(self):

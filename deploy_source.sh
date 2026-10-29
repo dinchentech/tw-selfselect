@@ -10,6 +10,10 @@
 #   ENV_FILE=/path/to/.env ./deploy_source.sh # 第一次部署時改上傳你指定的 .env（預設自動產生）
 #   INSTALL_GUARDS=1 ./deploy_source.sh       # 順帶同步 VM 上的守門員（scripts/vm/install_vm_guards.sh）
 #
+# ⚠️ **本腳本一律由使用者手動執行**（2026-10-29 使用者裁定）：AI agent／自動化流程不得代跑部署、
+#    也不得 SSH 到 VM 重啟容器。需要換版時只準備程式碼與版號（core/version.py 的 APP_VERSION），
+#    並提醒使用者自己跑這支。
+#
 # 與 tw-autotrader/deploy_source.sh 的差異
 #   · 這支不碰 live_trader_multi.py／plans 備份（本專案沒有那條腿）
 #   · 不走 Cloud Storage（本專案沒有 GCS bucket）：一律 **SSH 直傳**

@@ -3,7 +3,7 @@ core/trading_calendar.py — 台灣股市交易日曆
 判斷是否為交易日（週末 + 休市日 + 補班日）
 """
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 
@@ -62,3 +62,25 @@ class TradingCalendar:
 
     def get_first_trading_day(self, year, month):
         return self.get_nth_trading_day(year, month, 1)
+
+    def is_last_trading_day_of_week(self, d):
+        """d 是否為該週（週一～週日，與 pandas `to_period('W')` 同一口徑）最後一個交易日。
+
+        d 可為 date／datetime／ISO 字串／pandas.Timestamp（本模組不 import pandas）。
+        週 KD 策略（`user_strategies.weekly_kd_golden_cross`）用它判斷「這根週 K 收完了沒」：
+        未收完的週不發訊號，避免實盤在週三用半成品週 K 觸發黃金交叉。
+        """
+        if isinstance(d, str):
+            d = date.fromisoformat(d[:10])
+        elif isinstance(d, datetime):          # Timestamp 是 datetime 子類
+            d = d.date()
+        elif not isinstance(d, date):
+            d = d.date() if hasattr(d, 'date') else date.fromisoformat(str(d)[:10])
+        if not self.is_trading_day(d):
+            return False                       # 非交易日不可能是「最後交易日」
+        nxt = d + timedelta(days=1)
+        while nxt.isocalendar()[:2] == d.isocalendar()[:2]:
+            if self.is_trading_day(nxt):
+                return False
+            nxt += timedelta(days=1)
+        return True

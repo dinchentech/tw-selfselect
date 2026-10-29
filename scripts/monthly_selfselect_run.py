@@ -451,11 +451,54 @@ def push_env_to_vm(env_path, vm: str = "tw-autotrader", zone: str = "asia-east1-
     return True, "", local, remote
 
 
+def resolve_pool_n(cli_value=None, env=None) -> int:
+    """候選池大小：`--pool-n` ＞ `SELFSELECT_POOL_N` ＞ `SELFSELECT_PRESET` 的池 ＞ 100。
+
+    （2026-10-29 加 preset：使用者切 `SELFSELECT_PRESET=aggressive` 時，池會變 150，
+    除非另外明示 `SELFSELECT_POOL_N`；預設 preset `current` ⇒ 行為與舊版完全相同。）
+    """
+    src = env if env is not None else os.environ
+    if cli_value:
+        try:
+            return max(1, int(cli_value))
+        except (TypeError, ValueError):
+            pass
+    try:
+        n = int(src.get("SELFSELECT_POOL_N", ""))
+    except (TypeError, ValueError):
+        n = 0
+    if n > 0:
+        return n
+    try:
+        from core.selection_presets import active_name, resolve
+        prof = resolve(active_name(src))
+        if prof:
+            n = int(prof["knobs"].get("POOL_N") or 0)
+    except (ImportError, ValueError):
+        n = 0
+    return n if n > 0 else 100
+
+
+def build_picker_cmd(args, pool_n: int) -> list:
+    """組 picker 指令（純函式；2026-10-27 起接上 `--pool-n`）。"""
+    cmd = [sys.executable, os.path.join(_ROOT, "scripts", "monthly_rebalance_picker.py"),
+           "--risk", args.risk, "--top-n", str(args.top_n), "--pool-n", str(pool_n)]
+    if getattr(args, "sync_holdings_from_vm", False):
+        cmd += ["--sync-holdings-from-vm", "--vm", args.vm, "--zone", args.zone]
+    if getattr(args, "allow_stale_holdings", False):
+        cmd.append("--allow-stale-holdings")
+    if getattr(args, "ignore_drawback", False):
+        cmd.append("--ignore-drawback")
+    return cmd
+
+
 # ── CLI ────────────────────────────────────────────────────────
 def main():
     p = argparse.ArgumentParser(description="自選股每月作業（SOP 1–4 一條指令；預設只預覽）")
     p.add_argument("--risk", choices=["high_profit", "normal"], default="normal")
     p.add_argument("--top-n", type=int, default=5, help="本腿總檔數上限 N（預設 5）")
+    p.add_argument("--pool-n", type=int, default=None,
+                   help="候選池大小（誠實池）；預設讀 SELFSELECT_POOL_N，再退 100")
     p.add_argument("--leg-pct", type=float, default=None,
                    help="本腿資金上限 %%（預設＝沿用現有 .env 的腿額度）；每檔 alloc＝leg_pct ÷ top_n")
     p.add_argument("--per-name-alloc", type=float, default=None, help="直接指定每檔 alloc%%（覆寫 --leg-pct）")
@@ -483,6 +526,10 @@ def main():
     p.add_argument("--ignore-drawback", action="store_true",
                    help="忽略 MIN_DRAW_BACK 回撤保護（預設：回撤超標就本次續抱、不改 .env）")
     p.add_argument("--apply", action="store_true", help="真的寫入 .env（預設只預覽；會先備份）")
+    p.add_argument("--picks", default="", help="外部指定選股結果（逗號分隔代號；AI 選股用，會跳過內建選股）")
+    p.add_argument("--picks-file", default="", help="外部選股結果 JSON（{'as_of':...,'selected':[{'sid':...}]}）")
+    p.add_argument("--ai", action="store_true",
+                   help="標記本次是 AI 選股（寫入成功後在 logs/selfselect_auto.json 記 ai_applied，避免 D1 fallback 覆蓋）")
     p.add_argument("--sync-env-to-vm", action="store_true", help="寫入後把 .env scp 到 VM（不部署程式）")
     p.add_argument("--vm", default=os.getenv("SYNC_VM_NAME"), help="VM 名稱（預設讀 .env 的 SYNC_VM_NAME）")
     p.add_argument("--zone", default=os.getenv("SYNC_VM_ZONE", "asia-east1-b"))
@@ -546,8 +593,33 @@ def main():
         print("ℹ️ 不必重啟容器：主程式 08:40 熱重載 .env（急件再人工重啟）")
         return
 
+    # 1a) 外部選股結果（AI 選股／人工指定）：不跑內建選股器，其餘安全檢查完全不變
+    external_pick = None
+    if args.picks or args.picks_file:
+        if args.picks and args.picks_file:
+            sys.exit("❌ --picks 與 --picks-file 只能擇一")
+        if args.picks_file:
+            try:
+                doc = json.loads(Path(args.picks_file).read_text(encoding="utf-8"))
+            except Exception as e:
+                sys.exit(f"❌ 讀不到 --picks-file（{e}）")
+            sids, as_of = [], doc.get("as_of")
+            for x in doc.get("selected") or doc.get("picks") or []:
+                sids.append(x["sid"] if isinstance(x, dict) else str(x))
+        else:
+            sids = [x.strip() for x in args.picks.split(",") if x.strip()]
+            as_of = None
+        if not sids:
+            sys.exit("❌ 外部選股結果是空的")
+        external_pick = {"as_of": as_of or expected_data_date(), "risk_label": "AI 選股",
+                         "source": "external", "selected": [{"sid": x} for x in sids]}
+        print(f"ℹ️ 使用外部選股結果（{len(sids)} 檔）：{', '.join(sids)}"
+              f"（基準日 {external_pick['as_of']}）")
+
     # 1) 抓實盤持股 + 2) 跑選股
-    if args.reuse_pick:
+    if external_pick is not None:
+        pass        # 已指定名單，不必跑選股器
+    elif args.reuse_pick:
         if not PICK_FILE.exists():
             sys.exit(f"❌ --reuse-pick 但找不到 {PICK_FILE}")
         print(f"ℹ️ 沿用上次建議：{PICK_FILE}")
@@ -563,14 +635,18 @@ def main():
                 print("▶ 步驟 0：補資料（市值排名 ＋ 價格快取）")
                 for script, rc, tail in _rep["results"]:
                     print(f"   {'✅' if rc == 0 else '⚠️ '} {script}: {tail}")
-        cmd = [sys.executable, os.path.join(_ROOT, "scripts", "monthly_rebalance_picker.py"),
-               "--risk", args.risk, "--top-n", str(args.top_n)]
-        if args.sync_holdings_from_vm:
-            cmd += ["--sync-holdings-from-vm", "--vm", args.vm, "--zone", args.zone]
-        if args.allow_stale_holdings:
-            cmd.append("--allow-stale-holdings")
-        if args.ignore_drawback:
-            cmd.append("--ignore-drawback")
+        pool_n = resolve_pool_n(args.pool_n)
+        cmd = build_picker_cmd(args, pool_n)
+        print(f"▶ 候選池：當時市值前 {pool_n} 檔")
+        try:      # preset 想用的池與實際不同時要講出來（否則會拿別的口徑的回測數字套在自己身上）
+            from core.selection_presets import PRESETS, active_name
+            _preset = active_name()
+            _want = PRESETS[_preset]["knobs"]["POOL_N"]
+            if _preset != "current" and str(pool_n) != str(_want):
+                print(f"⚠️ preset `{_preset}` 預設池 {_want} 檔，但目前用 {pool_n} 檔"
+                      f"（`SELFSELECT_POOL_N` 優先）⇒ 該 preset 的回測數字不適用在這個池上")
+        except (ImportError, KeyError, ValueError):
+            pass
         print("▶", " ".join(cmd))
         r = subprocess.run(cmd, capture_output=True, text=True)
         print(r.stdout[-3000:] if r.stdout else "")
@@ -581,7 +657,7 @@ def main():
                 return
             sys.exit(f"❌ 選股失敗（returncode={r.returncode}）→ 中止，未改任何檔")
 
-    pick = json.loads(PICK_FILE.read_text(encoding="utf-8"))
+    pick = external_pick if external_pick is not None else json.loads(PICK_FILE.read_text(encoding="utf-8"))
     selected_all = [x["sid"] for x in pick.get("selected", [])]
     selected = [s for s in selected_all if s not in exclude]
     held = _load_held()
@@ -659,6 +735,15 @@ def main():
     shutil.copy2(env_path, bak)
     env_path.write_text(plan["env_text"], encoding="utf-8")
     print(f"\n✅ 已寫入 {env_path}（備份：{bak}）")
+    if args.ai or external_pick is not None:
+        # 外部（AI）選股寫入成功 ⇒ 標記本月完成，避免 D1 fallback 用規則選股覆蓋
+        try:
+            from core.selfselect_scheduler import mark_applied
+            _src = "ai" if args.ai else "external"
+            mark_applied(picks=selected, source=_src if _src == "ai" else "external")
+            print(f"✅ 已標記本月選股完成（source={_src}）：{', '.join(selected)}")
+        except Exception as e:
+            print(f"⚠️ 無法寫入選股狀態（可能導致 D1 fallback 覆蓋這份名單）：{e}")
     if plan["add"]:
         print(f"   下一個交易日 13:25–13:30 預期買進：{', '.join(plan['add'])}"
               f"（各約 NT${round(per_name / 100 * tc):,}）")

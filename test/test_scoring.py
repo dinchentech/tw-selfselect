@@ -1,0 +1,115 @@
+#!/usr/bin/env python
+"""`core/scoring.py`（選股評分共用實作）回歸測試（2026-10-29）。
+
+`SCORING_MODEL=zscore` 已成為**預設**（使用者裁定：預設組合＝zscore·停泊0050），
+所以這份算式同時決定回測與實盤選股，必須有測試釘住：
+1. PER 資格門檻 `0 < PER <= 40`（缺 PER 不得入選）。
+2. 權重方向：63 日動能／20 日動能／貼近 52 週高／低 PER 都是加分。
+3. 缺值（None）以 0 計，不得讓整個選股日變空。
+4. 同分時以 sid 升冪（可重現）。
+"""
+import os
+import sys
+import unittest
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from core.scoring import WEIGHTS, eligible, picks_from_rows, score_rows  # noqa: E402
+
+
+def row(sid, r63=0.1, r20=0.05, dist=-0.05, per=15.0):
+    return {"sid": sid, "r63": r63, "r20": r20, "dist": dist, "per": per}
+
+
+class TestEligible(unittest.TestCase):
+    def test_per_bounds(self):
+        self.assertTrue(eligible(row("A", per=15)))
+        self.assertFalse(eligible(row("A", per=0)))
+        self.assertFalse(eligible(row("A", per=-3)))
+        self.assertFalse(eligible(row("A", per=40.01)))
+        self.assertTrue(eligible(row("A", per=40)))
+        self.assertFalse(eligible({"sid": "A", "per": None}))
+        self.assertFalse(eligible({"sid": "A"}))
+
+
+class TestScoreRows(unittest.TestCase):
+    def test_weights_are_the_documented_ones(self):
+        self.assertEqual(WEIGHTS, {"r63": 0.40, "r20": 0.25, "dist": 0.20, "per": 0.15})
+
+    def test_directions(self):
+        """動能高、貼近高點、PER 低 ⇒ 分數高。"""
+        rows = [row("GOOD", r63=0.30, r20=0.15, dist=-0.01, per=10),
+                row("BAD", r63=-0.20, r20=-0.10, dist=-0.30, per=35)]
+        got = picks_from_rows(rows, top_n=2)
+        self.assertEqual(got[0], "GOOD")
+        self.assertEqual(got[1], "BAD")
+
+    def test_per_filter_applied(self):
+        rows = [row("CHEAP", per=10), row("RICH", per=90), row("NA", per=None)]
+        self.assertEqual(picks_from_rows(rows, top_n=5), ["CHEAP"])
+
+    def test_missing_values_do_not_empty_the_date(self):
+        """r63 全缺（暖機）時仍要能排序，不得回空。"""
+        rows = [row("A", r63=None, r20=0.1), row("B", r63=None, r20=0.2)]
+        got = picks_from_rows(rows, top_n=2)
+        self.assertEqual(len(got), 2)
+        self.assertEqual(got[0], "B", "r63 無資訊時，20 日動能高的勝出")
+
+    def test_tie_break_is_deterministic(self):
+        rows = [row("B"), row("A")]          # 完全同分
+        self.assertEqual([s for s, _ in score_rows(rows)], ["A", "B"])
+
+    def test_empty_input(self):
+        self.assertEqual(score_rows([]), [])
+        self.assertEqual(picks_from_rows([], top_n=5), [])
+
+    def test_scores_sorted_desc(self):
+        rows = [row("A", r63=0.1), row("B", r63=0.5), row("C", r63=0.3)]
+        scores = [s for _sid, s in score_rows(rows)]
+        self.assertEqual(scores, sorted(scores, reverse=True))
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
+
+
+class TestRevenueFactorAndSectorCap(unittest.TestCase):
+    """2026-10-29 新增：營收成長因子（`use_revenue`）與產業分散上限（`apply_sector_cap`）。"""
+
+    def _rows(self):
+        return [
+            {"sid": "HI", "r63": 0.2, "r20": 0.1, "dist": -0.02, "per": 12, "rev": 0.50},
+            {"sid": "LO", "r63": 0.2, "r20": 0.1, "dist": -0.02, "per": 12, "rev": -0.30},
+        ]
+
+    def test_revenue_factor_changes_order(self):
+        from core.scoring import score_rows
+        plain = [s for s, _ in score_rows(self._rows())]
+        withrev = [s for s, _ in score_rows(self._rows(), use_revenue=True)]
+        self.assertEqual(set(plain), {"HI", "LO"})
+        self.assertEqual(withrev[0], "HI", "營收 YoY 高的要在有營收因子時排前面")
+
+    def test_revenue_missing_is_neutral(self):
+        from core.scoring import score_rows
+        rows = [{"sid": "A", "r63": 0.1, "r20": 0.1, "dist": -0.02, "per": 12, "rev": None},
+                {"sid": "B", "r63": 0.1, "r20": 0.1, "dist": -0.02, "per": 12, "rev": None}]
+        self.assertEqual(len(score_rows(rows, use_revenue=True)), 2, "缺營收不得把標的踢掉")
+
+    def test_weights_sum_to_one(self):
+        from core.scoring import WEIGHTS, WEIGHTS_REVENUE
+        self.assertAlmostEqual(sum(WEIGHTS.values()), 1.0, places=9)
+        self.assertAlmostEqual(sum(WEIGHTS_REVENUE.values()), 1.0, places=9)
+
+    def test_sector_cap_limits_and_backfills(self):
+        from core.scoring import apply_sector_cap
+        ranked = ["A", "B", "C", "D"]
+        ind = {"A": "半導體", "B": "半導體", "C": "半導體", "D": "金融"}
+        self.assertEqual(apply_sector_cap(ranked, ind, 2), ["A", "B", "D"],
+                         "同產業最多 2 檔，超過的略過、由後面的產業遞補")
+        self.assertEqual(apply_sector_cap(ranked, ind, 0), ranked, "0＝不限")
+
+    def test_sector_cap_unknown_industry_grouped(self):
+        from core.scoring import apply_sector_cap
+        self.assertEqual(apply_sector_cap(["A", "B"], {}, 1), ["A"])

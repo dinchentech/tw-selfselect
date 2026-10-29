@@ -71,7 +71,7 @@ class TestFeeMath(unittest.TestCase):
         self.assertGreater(fees.effective_rate("BUY", 2_200), 0.008)
 
     def test_breakeven_amount_is_min_fee_over_rate(self):
-        """最低手續費的損益兩平金額：20 / 0.1425% ≈ 14,035 —— 全輪替補足門檻的依據。"""
+        """最低手續費的損益兩平金額：20 / 0.1425% ≈ 14,035 —— 批次換股補足門檻的依據。"""
         self.assertAlmostEqual(fees.breakeven_amount(), 20 / 0.001425, delta=1)
 
     def test_portfolio_totals(self):

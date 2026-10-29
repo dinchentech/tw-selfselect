@@ -2,7 +2,7 @@
 """
 stock_selector_grid.py — 選股共用函式庫（資料載入／特徵／評分）
 
-⚠️ 本專案（自選股）已移除全輪替的季度回測與 Grid Search 引擎，只保留被
+⚠️ 本專案（自選股）已移除母專案的季度換股回測與 Grid Search 引擎，只保留被
    `monthly_rebalance_picker.py` 與 `backtest_plan2_monthly_3group.py` 共用的部分：
      · load_stock() / load_twse_inst_merged() — 日線與法人資料（含快取）
      · score_stock() — 綜合評分（動能／技術面／穩定度／催化）

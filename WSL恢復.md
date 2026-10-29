@@ -206,6 +206,37 @@ gcloud compute ssh tw-autotrader --zone=asia-east1-b --command='echo SSH_OK'
 >
 > GitHub：`ssh-keygen -t ed25519 -C "frank@wsl" -f ~/.ssh/id_ed25519`，再把新的 `.pub` 貼回 GitHub → Settings → SSH and GPG keys。
 
+### 還原後第二關：`/etc/ssh` 權限被改回 `nobody:nogroup`（ssh／`gcloud compute ssh` 全掛）
+
+> 2026-10-27 實測：`~/.ssh` 修好了，`ssh` 還是回 `255`。
+
+症狀（任何 ssh 都失敗，連帶 `gcloud compute ssh`、`VM_sync_cache` 也不能用）：
+
+```
+Bad owner or permissions on /etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf
+ERROR: (gcloud.compute.ssh) [/usr/bin/ssh] exited with return code [255].
+```
+
+原因：`/etc/ssh`、`/etc/ssh/ssh_config.d`、`/usr/lib/systemd/ssh_config.d` 及其中的 `20-systemd-ssh-proxy.conf` 變成 `nobody:nogroup`。OpenSSH 要求 include 的設定檔必須由 **root** 擁有（且不能 group/world-writable），不符就整個中止。
+
+修法（需要 root）：
+
+```bash
+sudo chown -R root:root /etc/ssh
+sudo chown -R root:root /usr/lib/systemd/ssh_config.d
+sudo chmod 755 /etc/ssh /etc/ssh/ssh_config.d /usr/lib/systemd/ssh_config.d
+sudo chmod 644 /etc/ssh/ssh_config /usr/lib/systemd/ssh_config.d/20-systemd-ssh-proxy.conf
+```
+
+驗證（沒有警告、印出 SSH_OK 就是好了）：
+
+```bash
+ssh -G localhost >/dev/null && echo "ssh config OK"
+gcloud compute ssh tw-autotrader --zone=asia-east1-b --command='echo SSH_OK'
+```
+
+> 應急說明：權限未修好前，可用 Python 的 `paramiko`（不讀 `/etc/ssh/ssh_config`）直接連 `frank@35.194.221.238` 拉／推檔案；2026-10-27 就是用這招把 VM 的 `cache/` 同步回來。
+
 接著設定自己：.bashrc 中的FinMind憑證, .env檔中的FinMind key/玉山密碼/TG key, esun_sdk中放上玉山.example,.p12檔
 如果使用者要用自己的git別忘了清除~/tw-selfselect下的.git目錄=> rm -rf .git
 再init你自己的.git目錄=>

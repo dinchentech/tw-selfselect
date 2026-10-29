@@ -1,11 +1,11 @@
 ---
 type: project_topic
 status: active
-summary: "部署到 GCP VM 的完整流程（deploy_source.sh 建 image → SSH 直傳 → compose 重建 → 驗指紋）、VM 上三個 root 層守門員，以及 2026-10-02 崩潰迴圈與 2026-10-27 假告警兩次事故"
-tags: [部署, VM, cron, watchdog, 事故]
-contains: [背景, 當前結論, 實踐指南, 教訓, 開放問題]
+summary: "部署到 GCP VM 的完整流程（deploy_source.sh 建 image → SSH 直傳 → compose 重建 → 驗指紋）、VM 上三個 root 層守門員與儀表板自動發佈（deploy key 優先），以及 2026-10-02 崩潰迴圈、2026-10-27 假告警、2026-10-28 儀表板停更三次事故"
+tags: [部署, VM, cron, watchdog, 事故, 儀表板]
+contains: [experience, procedure, lesson, open_question]
 created: "2026-10-27"
-updated: "2026-10-27"
+updated: "2026-10-29"
 related: [environment-scope.md, total-assets-reconciliation.md]
 authoring_mode: ai_generated
 ---
@@ -25,7 +25,12 @@ authoring_mode: ai_generated
 
 ## 當前結論
 
-### 部署流程（`deploy_source.sh`，本機執行）
+### 部署流程（`deploy_source.sh`，本機執行、**只能由使用者手動跑**）
+
+> 🔒 **2026-10-29 使用者裁定（硬規則）**：`deploy_source.sh` **一律由使用者手動執行**。
+> AI agent／自動化流程不得代跑部署，也不得 SSH 到 VM 重啟容器；換版時只把程式碼與版號準備好，並提醒使用者。
+> 配套的版號規則：**只要程式有修改，`core/version.py` 的 `APP_VERSION` 就要 +1**（純文件不動版號）；
+> **大升版由使用者主動通知**。版號出現在啟動 banner、Telegram 啟動／收盤、儀表板標題，所以換版後在 VM 上一眼可確認。
 
 1. **前置檢查**：GCP 認證、VM 狀態；`SKIP_PREFLIGHT=1` 可跳過（不建議）。
 2. **本機建 image**（`tw-selfselect:latest`）→ 缺檔時自動補不進版控的 `esun_sdk/*.p12` 與 `config.simulation.ini`。
@@ -76,8 +81,14 @@ sudo tail -3 /var/log/tw_watchdog.log /var/log/tw_restart_guard.log
 ```
 
 - **VM 的 `~/tw-selfselect` 沒有 `.git`**（`deploy_source.sh` 是 scp 上傳），所以另建一個只取 `docs/` 的 sparse clone `~/dash-publish` 當發佈工作區；不要對部署目錄跑 `git init`，會與 scp 上傳打架。
-- **憑證**：`~/.dash-publish-token`（600）放 fine-grained PAT（只授本 repo、Contents: Read and write）。腳本用 `http.extraheader` 傳 Authorization，**不把 token 寫進 remote URL／`.git/config`**。
-- 安裝：`./scripts/vm/install_dashboard_publish.sh`（沒 token 就只裝腳本、不加 cron）／`VERIFY_ONLY=1` 檢查。
+- **憑證（二選一，`scripts/vm/publish_dashboard.sh` 內建優先序）**：
+  ① **deploy key（現行、推薦，不會過期）**：`~/.dash-deploy-key`（ed25519，600）＋私鑰對應的公鑰已加進 GitHub repo → Settings → Deploy keys（勾 Allow write access）；
+  腳本走 SSH（`git@github.com:<repo>.git`＋`GIT_SSH_COMMAND` 帶 `IdentitiesOnly`／`accept-new`），log 會印 `🔑 憑證：deploy key`。
+  ② **fine-grained PAT（fallback）**：`~/.dash-publish-token`（600，只授本 repo、Contents: Read and write），用 `http.extraheader` 傳 Authorization，
+  **不把 token 寫進 remote URL／`.git/config`**；log 印 `🔑 憑證：pat`。
+  兩者都沒有 ⇒ 腳本跳過發佈（`⏭`）並在 log 說明。
+- 安裝／檢查：`./scripts/vm/install_dashboard_publish.sh`（deploy key 或 PAT 都沒有時只裝腳本、不加 cron）／`VERIFY_ONLY=1` 會印公鑰與權限。
+- VM 的 cron 環境**沒有 `user.email`** ⇒ 腳本用 `git -c user.name=… -c user.email=… commit` 自帶身分（否則 13:50 的 cron 會直接 commit 失敗）。
 - 失敗會發 Telegram（成功不發，避免每天一則）；log 在 `~/tw-selfselect/logs/publish_dashboard.log`。
 
 > **要不要公開由使用者決定**：`.env` 的 `DASHBOARD_PUBLISH`（預設 `0`＝不公開；`1` 才推）。
@@ -99,6 +110,10 @@ sudo tail -3 /var/log/tw_watchdog.log /var/log/tw_restart_guard.log
 - **假告警會掩蓋真故障**：每 5 分鐘一則「容器未運行」，久了就沒人看，真的崩潰時也不會有人注意。
 - **watchdog 的「沒跑就 `docker start`」是雙面刃**：目標名寫錯時它只是吵；但若那名字哪天真的存在（回滾、手動建立），它會把**舊 bot 拉起來跟現役 bot 搶同一個券商帳號**。
 - **崩潰迴圈（2026-10-02）**：v4.41 部署了啟動即崩的版本，docker 依 restart policy 每分鐘重啟、每次都發啟動通知 ⇒ 無聲迴圈 15 小時、`RestartCount=25`、整個交易時段沒跑。守門員就是為此而生，別讓它再變成死的。
+- **「憑證檔存在」不等於「憑證有效」（2026-10-28）**：VM 的 `~/.dash-publish-token` 是 **0 bytes**（建立時就沒內容）⇒ 10-27、10-28 兩天 13:50 的排程都是 `⏭ token 檔為空 ⇒ 跳過`，
+  公開頁停在 10-27 12:32 的舊版（數字全 0、掛「缺少 holdings.json」警告）。排查看 `~/tw-selfselect/logs/publish_dashboard.log` 第一行憑證訊息，不要先懷疑程式。
+  收尾改用 **deploy key**（SSH，不會過期）：公鑰進 GitHub Deploy keys 後 `ssh -T git@github.com` 與 `DRY_RUN=1 publish_dashboard.sh` 都已驗證通過。
+- **更正（2026-10-29 健檢）**：本文件先前把「憑證」寫成只有 PAT 一種；實際 `scripts/vm/publish_dashboard.sh` 已是 **deploy key 優先、PAT 為 fallback**（2026-10-28 改的），照舊敘述排查會繞錯方向。已改寫上節。
 
 ## 開放問題
 

@@ -10,7 +10,7 @@
 行為:
   - 只用「當時市值前 N」誠實池（歷史股本×當季股價重建，無倖存者偏差）。
   - 選股僅用「截至當下」資料（無事後之明）。
-  - 使用者只選 高獲利(high_profit) / 正常(normal) 兩種風險。
+  - 使用者只選 高風險(high_profit) / 正常(normal) 兩種風險（名稱是策略池特性，不代表歷史報酬更高）。
   - 輸出: 目前持股 vs 新選股 → 建議賣出 / 維持 / 買入；每檔標的給「原固定策略」與「auto 自動感知」兩種建議，
     並輸出可直接貼進 .env 的 PC_<代號>=... 設定列。
 """
@@ -30,7 +30,7 @@ if os.path.isdir(_ROOT):
 import numpy as np, pandas as pd
 from pathlib import Path
 from core.cache_io import load_cache_or_raw
-from core.candidate_pool import build_quarterly_pool
+from core.candidate_pool import build_quarterly_pool, load_historical_shares
 import scripts.stock_selector_grid as ssg
 from strategies.auto_sensing import route_strategy, auto_sensing_strategy
 
@@ -43,7 +43,7 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv(override=True)
 
 GROUPS = {
-    "high_profit": {"label": "高獲利(高風險)", "strats": ["ma_cross", "breakout"]},
+    "high_profit": {"label": "高風險（高波動）", "strats": ["ma_cross", "breakout"]},
     "normal": {"label": "正常", "strats": ["bollinger", "ma_cross", "vwap", "breakout"]},
 }
 
@@ -52,7 +52,7 @@ LAST_PICK_FILE = os.getenv("MONTHLY_PICK_FILE", os.path.join("logs", "monthly_pi
 
 # ── 載入誠實池與價量 ─────────────────────────────────────
 def load_data(pool_n):
-    hist, _ = load_cache_or_raw("cache/inst_momentum/historical_shares.pkl")
+    hist, _hs = load_historical_shares()
     if not hist:
         sys.exit("❌ 找不到 cache/inst_momentum/historical_shares.pkl ⇒ 沒有誠實候選池可用。\n"
                  "   · 本機流程：先把 VM 的 cache 同步回來（alias `VM_sync_cache`，或\n"
@@ -123,22 +123,33 @@ def _get_dl():
 
 
 def _get_per(sid, sel_date):
-    """FinMind TaiwanStockPER → 最近一筆 PER(≤sel_date)，快取；失敗回 None。"""
+    """≤ sel_date 的 PER：**先讀磁碟快取**（`cache/stock_per/per_<sid>.pkl`，與回測同一份），
+    沒有才回頭查 FinMind（只在那檔快取缺檔時發生）。失敗回 None。
+
+    ⚠️ 2026-10-29 改：舊版每次都打 FinMind 抓 45 天窗口，`_zscore_rows()` 又只在「價量過熱命中」時
+    才取值 ⇒ 大多數候選股的 `per=None`，被 `0 < PER <= 40` 的資格門檻默默剔除（選股結果被吃掉一大半）。
+    """
     if sid in _PER_CACHE:
         return _PER_CACHE[sid]
     per = None
     try:
-        dl = _get_dl()
-        end = pd.Timestamp(sel_date).strftime("%Y-%m-%d")
-        start = (pd.Timestamp(sel_date) - pd.Timedelta(days=45)).strftime("%Y-%m-%d")
-        d = dl.taiwan_stock_per_pbr(stock_id=sid, start_date=start, end_date=end)
-        if d is not None and len(d):
-            d = d.copy()
-            d["date"] = pd.to_datetime(d["date"])
-            d = d[d["date"] <= pd.Timestamp(sel_date)].sort_values("date")
-            per = float(d.iloc[-1]["PER"]) if len(d) else None
+        from core.pit_data import per_asof
+        per = per_asof(sid, sel_date, fetch=False)
     except Exception:
         per = None
+    if per is None:
+        try:
+            dl = _get_dl()
+            end = pd.Timestamp(sel_date).strftime("%Y-%m-%d")
+            start = (pd.Timestamp(sel_date) - pd.Timedelta(days=45)).strftime("%Y-%m-%d")
+            d = dl.taiwan_stock_per_pbr(stock_id=sid, start_date=start, end_date=end)
+            if d is not None and len(d):
+                d = d.copy()
+                d["date"] = pd.to_datetime(d["date"])
+                d = d[d["date"] <= pd.Timestamp(sel_date)].sort_values("date")
+                per = float(d.iloc[-1]["PER"]) if len(d) else None
+        except Exception:
+            per = None
     _PER_CACHE[sid] = per
     return per
 
@@ -176,6 +187,158 @@ def is_overheated(sid, sel_date):
 
 
 # ── 選股規則（與回測相同，無事後之明）────────────────────
+# ── 評分模型（2026-10-29）：與回測 `SCORING_MODEL` 同義，預設 `zscore`（AI 代理那套公式）
+#   zscore ＝ 先篩 0<PER<=40，再 0.40·z(63日)+0.25·z(20日)+0.20·z(距52週高)+0.15·z(-PER)（共用 core/scoring.py）
+#   legacy ＝ 現行 ssg.score_stock 綜合分
+SCORING_MODEL = os.getenv("SELFSELECT_SCORING_MODEL", os.getenv("SCORING_MODEL", "zscore")).strip().lower()
+if SCORING_MODEL not in ("legacy", "zscore"):
+    SCORING_MODEL = "zscore"
+
+
+# ── zscore 的兩個因子開關（2026-10-29 補進實盤；與回測 `FACTOR_REVENUE`／`MAX_PER_SECTOR` 同義）
+#   SELFSELECT_FACTOR_REVENUE=1（預設）：月營收 YoY 加進分數（權重見 core.scoring.WEIGHTS_REVENUE）
+#   SELFSELECT_MAX_PER_SECTOR=2     ：每產業最多 2 檔（0＝不限，預設）
+#   為什麼預設開營收因子：回測（2016-2025、zscore＋停泊0050）各池大小都是正貢獻
+#   （池20 +395.1%→+407.1%、池50 +291.1%→+446.0%、池100 +411.1%→+709.6%、池150 +541.7%→+704.7%）。
+# ── 選股口徑 preset（2026-10-29，`core/selection_presets.py`）：預設 `current`＝行為不變。
+#   `SELFSELECT_PRESET=revenue|aggressive` 才會改池大小／營收因子／產業上限，
+#   而且**只填使用者沒明示的鍵**（`SELFSELECT_FACTOR_REVENUE=0` 這類明示值一律優先）。
+from core.selection_presets import (DEFAULT_PRESET, PRESETS as _PRESETS, active_name as _preset_name,
+                                    expand as _preset_expand, warning_text as _preset_warning)
+
+SELECTION_PRESET = _preset_name()
+# 實盤的「明示」只認 **SELFSELECT_ 前綴**的變數：`POOL_N`／`FACTOR_REVENUE`／`MAX_PER_SECTOR`
+# 是回測旋鈕，若它們躺在同一份 .env 裡就被拿來當實盤設定，會變成「改回測順便改實盤」的隱形耦合。
+_LIVE_ENV_MAP = {"POOL_N": "SELFSELECT_POOL_N", "FACTOR_REVENUE": "SELFSELECT_FACTOR_REVENUE",
+                 "MAX_PER_SECTOR": "SELFSELECT_MAX_PER_SECTOR"}
+_explicit_knobs = {k: os.environ[v] for k, v in _LIVE_ENV_MAP.items() if os.environ.get(v)}
+PRESET_KNOBS = _preset_expand(SELECTION_PRESET, _explicit_knobs)
+
+FACTOR_REVENUE = str(PRESET_KNOBS.get("FACTOR_REVENUE", "0")).strip() not in ("0", "false", "False")
+MAX_PER_SECTOR = int(PRESET_KNOBS.get("MAX_PER_SECTOR") or 0)
+#: 月營收快取缺檔時要不要抓 FinMind（抓過就落地，之後離線可用）。0＝只用快取。
+REVENUE_FETCH = os.getenv("SELFSELECT_REVENUE_FETCH", "1").strip() not in ("0", "false", "False")
+_INDUSTRY = None
+_SECTOR_LOADED = [False]
+_Z_STATS = {}          # pick_zscore 的診斷數字（main 印出來，讓使用者看得到因子到底有沒有作用）
+
+
+def _industry_map():
+    """`cache/stock_industry.pkl`（{sid: 產業}）；讀不到就回 {}（此時產業上限自動失效）。"""
+    global _INDUSTRY
+    if not _SECTOR_LOADED[0]:
+        _SECTOR_LOADED[0] = True
+        try:
+            from core.cache_io import load_cache_or_raw
+            m, _meta = load_cache_or_raw("cache/stock_industry.pkl")
+            _INDUSTRY = dict(m or {})
+        except Exception:
+            _INDUSTRY = {}
+    return _INDUSTRY or {}
+
+
+def _rev_yoy(sid, sel_date):
+    """月營收 YoY（用公告時間可得的最近一個月，只用 ≤ sel_date 的資訊）；沒有 → None。"""
+    try:
+        from core.pit_data import load_revenue_rows, revenue_pack
+        rows = load_revenue_rows(sid, fetch=REVENUE_FETCH)
+        if not rows:
+            return None
+        pack = revenue_pack(rows, sel_date)
+        if not pack.get("available") or not pack.get("items"):
+            return None
+        return pack["items"][-1].get("yoy")
+    except Exception:
+        return None
+
+
+def _zscore_rows(pool, sel_date):
+    """收集 z 分數模型需要的欄位（只用 ≤ sel_date 的資料）。
+
+    PER 走 `_get_per()`（磁碟快取優先）；`FACTOR_REVENUE=1` 時另抓月營收 YoY（缺值以中性 0 計，不踢除）。
+    """
+    rows = []
+    for sid in pool:
+        df = ssg.load_stock(sid)
+        if df is None or not len(df):
+            continue
+        sd = ssg._snap_date(df, sel_date)
+        if sd is None or sd not in df.index:
+            continue
+        idx = df.index.get_loc(sd)
+        win = df.iloc[max(0, idx - 251):idx + 1]
+        hi = float(win["high"].max())
+        cp = float(df.loc[sd, "close"])
+        rows.append({"sid": sid, "per": _get_per(sid, sd),
+                     "rev": _rev_yoy(sid, sd) if FACTOR_REVENUE else None,
+                     "r63": ssg.trailing_ret(df, sd, 63), "r20": ssg.trailing_ret(df, sd, 20),
+                     "dist": (cp / hi - 1.0) if hi > 0 else None})
+    return rows
+
+
+def pick_zscore(pool, sel_date, top_n):
+    """`SCORING_MODEL=zscore`：依共用公式（`core/scoring.py`）排序取前 N。
+
+    可選：`FACTOR_REVENUE=1` 加入月營收 YoY、`MAX_PER_SECTOR>0` 套產業分散上限（超過上限者剔除、
+    由後面的名次遞補，總檔數不變）。不足 N 檔仍交給 `fill_to_target()`（依 `FILL_MODE`）。
+    """
+    from core.scoring import apply_sector_cap, score_rows
+
+    rows = _zscore_rows(pool, sel_date)
+    ranked = score_rows(rows, use_revenue=FACTOR_REVENUE)
+    if MAX_PER_SECTOR > 0:
+        industry = _industry_map()
+        if industry:
+            capped = apply_sector_cap(ranked, industry, MAX_PER_SECTOR)
+            pos = {sid: i for i, (sid, _s) in enumerate(ranked)}
+            ranked = [(sid, pos[sid]) for sid in capped]        # 分數位置保留（只影響取前 N）
+        else:
+            print(f"⚠️ 讀不到產業對照（cache/stock_industry.pkl）⇒ MAX_PER_SECTOR={MAX_PER_SECTOR} 忽略")
+    eligible = [r for r in rows if r.get("per") is not None]
+    _Z_STATS.update({
+        "n_rows": len(rows), "n_per": len(eligible),
+        "n_rev": sum(1 for r in rows if r.get("rev") is not None),
+        "n_ranked": len(ranked),
+        "rev_on": FACTOR_REVENUE, "cap": MAX_PER_SECTOR,
+    })
+    if not ranked:
+        print(f"⚠️ zscore 沒有合格候選（報告 {len(rows)} 檔、有 PER 的 {len(eligible)} 檔）")
+    ranked_sids = [sid for sid, _s in ranked]
+    strict = ranked_sids[:top_n]
+    return fill_to_target(strict, ranked_sids, _mom_fallback(pool, sel_date, 63), top_n,
+                          sel_date=sel_date)
+
+
+# ── 選不滿 N 檔時的政策（2026-10-29 新增；與回測的 FILL_MODE 同義）──────────
+#   proportional（預設）＝就選出的那幾檔，資金平均分配
+#   topup              ＝補滿：先依分數補「被過熱／法人擋掉」的，仍不足再依 63 日動能補
+FILL_MODE = os.getenv("SELFSELECT_FILL_MODE", os.getenv("FILL_MODE", "proportional")).strip().lower()
+if FILL_MODE not in ("proportional", "topup"):
+    FILL_MODE = "proportional"
+# 補滿時**只用個股**（2026-10-29 使用者裁定）：ETF 只用在閒置資金停泊，不參與選股。
+
+
+def fill_to_target(strict, ranked_all, fallback, top_n, sel_date=None):
+    """`topup` 模式把 `strict` 補到 `top_n`：先補 ranked_all 中未入選者，再用 fallback（動能排序）。
+
+    ⚠️ 只用**個股**補（2026-10-29 使用者裁定：ETF 只用在閒置資金停泊，不參與選股）。
+    """
+    out = list(strict)[:top_n]
+    if FILL_MODE != "topup" or len(out) >= top_n:
+        return out
+    for sid in ranked_all:
+        if len(out) >= top_n:
+            break
+        if sid not in out:
+            out.append(sid)
+    for sid in fallback:
+        if len(out) >= top_n:
+            break
+        if sid not in out:
+            out.append(sid)
+    return out
+
+
 def pick_high_profit(pool, sel_date, top_n, min_price, mom_days, inst_ok):
     cands = []
     for sid in pool:
@@ -200,7 +363,26 @@ def pick_high_profit(pool, sel_date, top_n, min_price, mom_days, inst_ok):
             continue
         cands.append((sid, r))
     cands.sort(key=lambda x: -x[1])
-    return [s for s, _ in cands[:top_n]]
+    return fill_to_target([s for s, _ in cands[:top_n]], [s for s, _ in cands],
+                          _mom_fallback(pool, sel_date, mom_days), top_n, sel_date=sel_date)
+
+
+def _mom_fallback(pool, sel_date, mom_days=63):
+    """補滿用的備援排序：同池、63 日動能（不看過熱/法人；排除資料不足）。"""
+    out = []
+    for sid in pool:
+        df = ssg.load_stock(sid)
+        if df is None or not len(df):
+            continue
+        sd = ssg._snap_date(df, sel_date)
+        if sd is None or sd not in df.index:
+            continue
+        r = ssg.trailing_ret(df, sd, mom_days)
+        if r is None:
+            continue
+        out.append((sid, r))
+    out.sort(key=lambda x: -x[1])
+    return [s for s, _ in out]
 
 
 def pick_normal(pool, sel_date, top_n, inst_ok):
@@ -221,7 +403,9 @@ def pick_normal(pool, sel_date, top_n, inst_ok):
             continue
         scored.append(s)
     scored.sort(key=lambda x: -x["total"])
-    return [s["symbol"] for s in scored[:top_n]]
+    return fill_to_target([s["symbol"] for s in scored[:top_n]],
+                          [s["symbol"] for s in scored],
+                          _mom_fallback(pool, sel_date, 63), top_n, sel_date=sel_date)
 
 
 def gcloud_scp_command(vm: str, zone: str, dest: str) -> list:
@@ -331,9 +515,10 @@ def read_actual_holdings():
 
 
 def main():
-    p = argparse.ArgumentParser(description="每月換股選股工具（高獲利/正常）")
+    p = argparse.ArgumentParser(description="每月換股選股工具（高風險/正常）")
     p.add_argument("--risk", choices=["high_profit", "normal"], default="high_profit")
-    p.add_argument("--pool-n", type=int, default=100)
+    p.add_argument("--pool-n", type=int, default=None,
+                   help="候選池大小；預設＝SELFSELECT_POOL_N ＞ SELFSELECT_PRESET 的池 ＞ 100")
     p.add_argument("--top-n", type=int, default=5)
     p.add_argument("--min-price", type=float, default=5)
     p.add_argument("--mom-days", type=int, default=63)
@@ -355,6 +540,29 @@ def main():
     p.add_argument("--ignore-drawback", action="store_true",
                    help="忽略 MIN_DRAW_BACK 回撤保護（預設：回撤超標就本次續抱、exit 3）")
     args = p.parse_args()
+
+    # 池大小解析：--pool-n ＞ SELFSELECT_POOL_N ＞ preset ＞ 100
+    if args.pool_n is None:
+        env_pool = os.getenv("SELFSELECT_POOL_N")
+        args.pool_n = int(env_pool or PRESET_KNOBS.get("POOL_N") or 100)
+        _preset_wants = _PRESETS[SELECTION_PRESET]["knobs"]["POOL_N"]
+        if SELECTION_PRESET != "current" and str(args.pool_n) != str(_preset_wants):
+            print(f"⚠️ preset `{SELECTION_PRESET}` 想要池 {_preset_wants} 檔，但"
+                  f"{'`SELFSELECT_POOL_N=' + env_pool + '`' if env_pool else '目前設定'}"
+                  f" 讓它變成 {args.pool_n} 檔 ⇒ 回測數字（以池 {_preset_wants} 檔計）不適用在這個池上。"
+                  f" 想照 preset：把 .env 的 `SELFSELECT_POOL_N` 改成 {_preset_wants} 或拿掉它。")
+        elif SELECTION_PRESET != "current" and not env_pool:
+            print(f"ℹ️ 池大小取自 preset `{SELECTION_PRESET}`：{args.pool_n} 檔")
+
+    print(f"🎚️ 選股口徑 preset: {SELECTION_PRESET}（{_PRESETS[SELECTION_PRESET]['label']}）"
+          f"｜池 {args.pool_n}｜營收因子 {'開' if FACTOR_REVENUE else '關'}"
+          f"｜產業上限 {MAX_PER_SECTOR or '無'}")
+    if SELECTION_PRESET == DEFAULT_PRESET:
+        print("   ℹ️ 預設口徑的歷史代價（2016-2025、含成本）：MDD −53.7%（0050 −34.0%）、"
+              "夏普 0.95（0050 1.06）—— +762.4% 的報酬是用更深回撤換來的；想回舊行為用 "
+              "SELFSELECT_PRESET=current")
+    else:
+        print(_preset_warning())
 
     global data
     data, pools = load_data(args.pool_n)
@@ -396,7 +604,17 @@ def main():
     if args.risk == "high_profit":
         selected = pick_high_profit(pool, sel_date, args.top_n, args.min_price, args.mom_days, inst_ok)
     else:
-        selected = pick_normal(pool, sel_date, args.top_n, inst_ok)
+        if SCORING_MODEL == "zscore":
+            selected = pick_zscore(pool, sel_date, args.top_n)
+            if _Z_STATS:
+                print(f"🔢 zscore 口徑：候選 {_Z_STATS['n_rows']} 檔｜有 PER {_Z_STATS['n_per']} 檔"
+                      f"｜有營收 {_Z_STATS['n_rev']} 檔"
+                      f"｜營收因子 {'開' if _Z_STATS['rev_on'] else '關'}"
+                      f"｜產業上限 {_Z_STATS['cap'] or '無'}"
+                      f"｜可排序 {_Z_STATS['n_ranked']} 檔"
+                      f"｜實際選出 {len(selected)} 檔")
+        else:
+            selected = pick_normal(pool, sel_date, args.top_n, inst_ok)
 
     # ── 先從 VM 抓回實盤持股（本機流程；2026-09-22 使用者裁定以 B 為主）──
     if args.sync_holdings_from_vm:
@@ -486,7 +704,8 @@ def main():
     table = []
     ov_flags = []
     for i, sid in enumerate(selected):
-        df = data.get(sid)
+        # ETF 補滿的標的不在候選池的 data 裡 ⇒ 直接載入，否則 price 會是 0
+        df = data.get(sid) if data.get(sid) is not None else ssg.load_stock(sid)
         fixed = GROUPS[args.risk]["strats"][i % len(GROUPS[args.risk]["strats"])]
         routed = route_strategy(df, sel_date) if df is not None else "ma_cross"
         name = ssg.POOL_LABELS.get(sid, "")

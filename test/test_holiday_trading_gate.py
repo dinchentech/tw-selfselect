@@ -8,7 +8,7 @@
 市場休市 ⇒ 玉山退單 ⇒ 每檔一次 TG 告警（噪音＋無意義委託）。
 
 修法：迴圈頂端算一次 `is_tday = is_weekday and is_trading_day(now)`（`core.live_utils`，
-日曆＝`core/trading_calendar`，與全輪替選股同一份），三處交易閘門改用它；
+日曆＝`core/trading_calendar`，與母專案選股同一份），三處交易閘門改用它；
 **報告端**（`report_due(..., trading_day=is_tday)`）先前已帶交易日判斷。
 
 ⚠️ 刻意**不**改 08:40 熱重載（`is_weekday`）：它同時負責「休市日曆自動更新」，

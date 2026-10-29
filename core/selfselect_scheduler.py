@@ -45,6 +45,69 @@ D1_FROM, D1_TO = (13, 36), (13, 55)      # D1 收盤後
 D2_FROM, D2_TO = (8, 5), (8, 40)         # D2 補跑（08:40 熱重載之前）
 MAX_ATTEMPTS = int(os.getenv("SELFSELECT_MAX_ATTEMPTS", "3"))
 
+#: 換股頻率（2026-10-28 新增）：每 N 個月才自動選股一次。**預設 1＝每月，與舊行為完全相同**。
+#:   `12` ⇒ 每年只選一次股（其餘月份維持原持股，不被換掉；策略訊號照常進出）。
+#:   ⚠️ 改這個值等於改實盤換股節奏，請先用回測驗證（`REBAL_MONTHS`，見
+#:   `scripts/backtest_plan2_monthly_3group.py`）並確認使用者同意。
+REBAL_MONTHS = max(1, int(os.getenv("SELFSELECT_REBAL_MONTHS", "1") or "1"))
+
+#: AI 選股模式（2026-10-28 新增）：`SELFSELECT_AI=1` 時，
+#: **D1 不再自動選股** —— 使用者必須在 D1 用 AI 選股（DSH 貼日期）並寫入 `.env`；
+#: 若到 `SELFSELECT_AI_DEADLINE`（預設 13:50，D1 當天）還沒完成，**D1 就 fallback 跑原本的自動選股**。
+#: 預設 0＝完全維持舊行為（D1 直接自動選股）。
+AI_MODE = os.getenv("SELFSELECT_AI", "0").strip().lower() in ("1", "true", "yes", "on")
+AI_DEADLINE = os.getenv("SELFSELECT_AI_DEADLINE", "13:50")
+
+
+def ai_deadline_passed(now=None, deadline=None):
+    """AI 選股的「D1 期限」是否已過（過了就 fallback 自動選股）。"""
+    now = now or datetime.now()
+    dl = (deadline or AI_DEADLINE or "13:50").strip()
+    try:
+        hh, mm = [int(x) for x in dl.split(":")[:2]]
+    except Exception:
+        hh, mm = 13, 50
+    return (now.hour, now.minute) >= (hh, mm)
+
+
+def ai_pending(state=None, now=None):
+    """AI 模式下，本月是否「還在等使用者手動完成 AI 選股」。"""
+    if not AI_MODE:
+        return False
+    now = now or datetime.now()
+    state = state if state is not None else load_state()
+    mk = month_key(now)
+    if state.get("month") == mk and state.get("status") == "applied":
+        return False          # 本月已完成（不管是 AI 還是 fallback）
+    if state.get("ai_applied") == mk:
+        return False          # AI 選股已寫入 .env
+    return True
+
+
+def mark_applied(month=None, picks=(), source="ai", state_path=None):
+    """標記「本月選股已完成」（AI 選股寫入 .env 後呼叫；避免 D1 fallback 覆蓋）。
+
+    寫入 `logs/selfselect_auto.json`：`month`／`status=applied`／`ai_applied=month`／`picks`。
+    """
+    now = datetime.now()
+    st = load_state(state_path)
+    mk = month or month_key(now)
+    st.update({"month": mk, "status": "applied", "source": source,
+               "ai_applied": mk if source == "ai" else st.get("ai_applied"),
+               "picks": list(picks), "applied_at": now.strftime("%Y-%m-%d %H:%M:%S")})
+    save_state(st, state_path)
+    return st
+
+
+def is_selection_month(now=None, n=None):
+    """本月是否該執行自動選股（每 n 個月一次；n=1 ⇒ 每月，舊行為）。"""
+    n = REBAL_MONTHS if n is None else max(1, int(n))
+    if n <= 1:
+        return True
+    now = now or datetime.now()
+    # 以日曆月對齊：n=12 ⇒ 每年 1 月選股（4 ⇒ 1/5/9 月）
+    return (now.month - 1) % n == 0
+
 
 def _cal():
     from core.trading_calendar import TradingCalendar
@@ -117,21 +180,32 @@ def should_pick(now=None, state=None, calendar=None):
     reason = pick_window_reason(now, calendar)
     if not reason:
         return None
+    if not is_selection_month(now):
+        return None          # 本月不是選股月（每 REBAL_MONTHS 個月一次；預設 1＝每月都選）
+    if AI_MODE and ai_pending(state, now) and not ai_deadline_passed(now):
+        return None          # AI 模式：D1 期限前先等使用者手動完成（期限後 fallback）
     mk = month_key(now)
     if state.get("month") == mk and state.get("status") == "applied":
         return None
     if state.get("month") == mk and now.strftime("%Y-%m-%d") == state.get("last_attempt_date"):
         if int(state.get("attempts", 0)) >= MAX_ATTEMPTS:
             return None
+    _fallback = AI_MODE and ai_deadline_passed(now)
+    _every = "每月" if REBAL_MONTHS <= 1 else f"每 {REBAL_MONTHS} 個月"
+    if _fallback:
+        _every += "（AI 未完成 → fallback）"
     return {"month": mk, "day": reason,
-            "label": "自動選股（每月第 1 個交易日）" if reason == "D1" else "自動選股（D2 早上補跑）"}
+            "label": f"自動選股（{_every}第 1 個交易日）" if reason == "D1"
+                     else f"自動選股（{_every}換股的 D2 早上補跑）"}
 
 
-def picker_command(top_n=None, risk=None, env_path=".env", extra_args=()):
+def picker_command(top_n=None, risk=None, env_path=".env", extra_args=(), pool_n=None):
     """要跑的指令（＝本機那條 SOP 一條指令；容器內不需要 `--sync-holdings-from-vm`）。"""
+    pool = str(pool_n or os.getenv("SELFSELECT_POOL_N", "100") or "100")
     cmd = [sys.executable, os.path.join("scripts", "monthly_selfselect_run.py"),
            "--risk", risk or os.getenv("SELFSELECT_RISK", "normal"),
            "--top-n", str(top_n or os.getenv("SELFSELECT_TOP_N", "5")),
+           "--pool-n", pool,
            "--env", env_path,
            "--no-sync",          # 容器內持股就是實盤持股，不必去 VM 抓
            "--apply"]            # 真的寫 .env（腳本自己會先備份）
