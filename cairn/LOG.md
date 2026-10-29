@@ -2,6 +2,18 @@
 
 本檔以倒序記錄實質推進（最新在最上面，緊接這行之下）。每則保持精簡——只寫摘要與指標，結論沉澱到 `cairn/<主題>.md`。
 
+## 2026-10-30 · 新增 W7 講稿版：v1.1 之後的 zscore（預設）＋ AI 選股
+
+- 交付 `plans/ppt/TW-SELFSELECT台股買賣自動化系統-W7-講稿版.pptx`（**18 頁**、備註合計約 5,400 字／估 40 分 30 秒）
+  與 `W7-解說腳本.md`（由 `notes_to_script.py` 從備註反推）。產生器 `plans/ppt/make_w7.py`（沿用 W6 母版，刪光範例頁後重畫）。
+- 四段主軸：①zscore（預設）＋AI 選股與回測結果 ②zscore 重要參數速查 ③AI 選股怎麼用（D1 五步＋逾期 fallback）
+  ④可能的改進方式（依槓桿排序）＋版本／部署紀律一頁。
+- 數字口徑一致：2016-2025、正常組、含成本、`PROFILE=default`；preset current +411.1%／revenue +762.4%／aggressive +1323.6%，
+  0050 +477.6%；並如實寫出「回撤 −53.7%、夏普 0.95、樣本內挑選、資料快照 515→645 檔差 253pp、下市價偏樂觀」。
+- 版號 `1.1.3 → 1.1.4`（新增 `plans/ppt/make_w7.py`）。`plans/` 不在 `BUILD_PATHS`，但 `core/version.py` 在 ⇒ 指紋仍會變（只是版號字串）。
+  執行行為不變；不趕著為此重新部署，下次有真正的程式改動時一起上。
+- 未做配音版／MP4（需 `plans/generate_narration.sh build` 跑 TTS，本次未執行）。
+
 ## 2026-10-29 · v1.1.3：儀表板改走 `gh-pages` 分支模式（`dash`＋Actions 方案作廢）
 
 - `dash` 方案**實測失敗**：把發佈改推專用 `dash` 分支、並在 `pages.yml` 觸發分支加入 `dash` 之後，

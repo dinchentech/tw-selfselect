@@ -35,6 +35,18 @@ W4 另補「keep_wait 人工管理怎麼用」一頁，對應 `策略說明.md` 
 | `TW-SELFSELECT台股買賣自動化系統-W4-講稿版.pptx` | 28（原 39；新增 2 頁：auto 型態感知、keep_wait 人工管理）|
 | `TW-SELFSELECT台股買賣自動化系統-W5-講稿版.pptx` | 26 |
 | `TW-SELFSELECT台股買賣自動化系統-W6-講稿版.pptx` | 24（原 21；新增 4 頁：完整流程、生命週期、賣出後會不會補選、母專案自選股回測）|
+| `TW-SELFSELECT台股買賣自動化系統-W7-講稿版.pptx` | 18（新編：v1.1 之後的 zscore（預設）＋ AI 選股／重要參數／AI 選股實作／可能的改進）|
+
+## W7（2026-10-30 新增，講稿版）
+
+主題是 **v1.1.x 之後的選股方式**：新加的 `zscore`（現行預設）與 AI 選股，以及回測結果、參數、實作流程與改進方向。
+
+- 產生器：`plans/ppt/make_w7.py`（沿用 W6 的母版與版型，刪光範例頁後用 python-pptx 重畫 18 頁＋講稿備註）。
+  重新產生：`.venv/bin/python plans/ppt/make_w7.py`
+- 講解腳本：`TW-SELFSELECT台股買賣自動化系統-W7-解說腳本.md`（由 `notes_to_script.py` 從備註反推，18 頁／約 40 分 30 秒）。
+- 內容與數字口徑：2016-2025、正常組、含成本、`PROFILE=default`（停泊 0050＋大盤年線），資料快照
+  宇宙 672 檔、PER 672/672、月營收 645/672；三個 preset（current +411.1%／revenue +762.4%／aggressive +1323.6%）與 0050（+477.6%）。
+- 尚未做配音版／MP4（需要 `plans/generate_narration.sh build` 重跑 TTS，本次未執行）。
 
 ## 配音版與 MP4（2026-10-27 重製）
 
