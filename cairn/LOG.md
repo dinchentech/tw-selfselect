@@ -2,6 +2,19 @@
 
 本檔以倒序記錄實質推進（最新在最上面，緊接這行之下）。每則保持精簡——只寫摘要與指標，結論沉澱到 `cairn/<主題>.md`。
 
+## 2026-10-29 · VM 升級前置：補 .env 池/preset、推 PER 與月營收快取；**發現部署其實沒生效（VM 仍 v1.0.0）**
+
+- 使用者已自行跑 `deploy_source.sh`，但實測 **VM 仍是 v1.0.0**：容器指紋 `c90ebbc6`、image `tw-selfselect:latest` 建於 2026-10-27 11:43
+  （本機 image 同樣是 10-27 ⇒ `docker build` 根本沒跑）；容器內 `core.pit_data` 不存在。⇒ 換版仍待使用者重跑部署（依規則不由 agent 代跑）。
+- 已完成（agent 代處理，皆已驗證）：
+  - VM `.env` 明示 `SELFSELECT_POOL_N=100` 與 `SELFSELECT_PRESET=revenue`（原本兩者都未明示、靠程式預設）。備份 `.env.bak_before_pool100_*`。
+  - 推 `cache/stock_per`（**672 檔／37MB**）＋`cache/stock_revenue`（**645 檔／7MB**）＋`cache/stock_industry.pkl` 到 VM，容器內看得到（672/645）。
+  - bot 偵測 `.env` 變更後熱重載、回報「目前監控 5 檔」；持倉 5 檔、近 10 分鐘 0 錯誤、磁碟 9.0G 可用。當下為 22:5x（收盤後）⇒ 無交易風險。
+- **踩到的坑（已修）**：VM `.env` 最後一行沒有換行符，直接 `>>` 追加會把新內容**黏在最後一行 `PC_1802=…`** 上
+  （等於弄壞該檔的 PC_ 設定）。已從備份還原並改用「先 `printf "\n"` 再追加」，並用 json 解析驗過 5 筆 `PC_` 全部正常。
+  ⇒ 之後對任何 `.env` 追加都要先確認結尾換行；已記進 `cairn/deploy-pipeline.md`。
+- 待辦：使用者重跑 `./deploy_source.sh` → agent 驗證 banner／指紋 `132bdb86`、`v1.1.0`，以及 D1 picker 的 `🎚️ preset: revenue｜池 100｜營收因子 開`。
+
 ## 2026-10-29 · 版號 1.0.0 → **1.1.0**，並立下「改程式就 +1、部署只能手動」兩條硬規則
 
 - 版號：`core/version.py` `APP_VERSION` **1.0.0 → 1.1.0**（含 AI 選股模式、zscore 評分器、選股 preset、宇宙/PIT 資料修復），

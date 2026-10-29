@@ -97,7 +97,16 @@ sudo tail -3 /var/log/tw_watchdog.log /var/log/tw_restart_guard.log
 > ⚠️ **公開的是完整儀表板**：持股股數、平均成本、總資產都會上網、可能被搜尋引擎索引。
 > 目前 `ESUN_ENVIRONMENT=simulation`（假錢）無妨；**切 `real` 前必須改回 `0`**（或自行改成脫敏版）。
 
-## 實踐指南
+### 動 `.env` 的兩個鐵則（2026-10-29 實證）
+
+1. **追加前先確認結尾有換行**：VM 的 `.env` 最後一行（`PC_…`）常常沒有 trailing newline，直接 `>>` 會把新內容黏在
+   最後一行上，等於**弄壞那個 `PC_` 的 JSON**（live 設定直接壞掉，而且不會報錯）。正確做法：
+   `printf '\n新增行\n' >> .env`，改完用 python 逐行 `json.loads` 驗過所有 `PC_`。
+2. **改完一定備份**：`cp .env .env.bak_<原因>_$(date +%Y%m%d-%H%M%S)`（VM 上已有多份）。
+   主程式會偵測 `.env` 指紋變化並**熱重載**（log 會印「偵測到 .env 內容變更 ⇒ 套用」「目前監控 N 檔」），
+   所以壞內容會**立刻**生效 ⇒ 備份與驗證不可省。
+
+### VM 上三個 root 層守門員
 
 - **部署時順帶同步守門員**：`INSTALL_GUARDS=1 ./deploy_source.sh`（預設不做，避免部署腳本動 root 設定與 cron）。單獨更新用 `./scripts/vm/install_vm_guards.sh`。
 - **改容器名／目錄名時**，同時檢查這四處：`docker-compose.yml`、`deploy_source.sh` 的 `CONTAINER`／`OLD_CONTAINER`、`scripts/vm/tw_watchdog.sh` 的 `CONTAINER_NAME`／`ENV_FILE`／`pgrep` 目標、`scripts/vm/tw_restart_guard.sh` 的 `GUARD_CONTAINER`／`STATE`／`ENV_FILE`。
