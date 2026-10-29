@@ -49,7 +49,7 @@ def _log(msg):
 def honest_pool(as_of, pool_n, hist, data_rows, ssg):
     """as_of 當時的誠實池（季度點收盤市值前 pool_n）。"""
     import pandas as pd
-    from core.candidate_pool import build_quarterly_pool, load_historical_shares
+    from core.candidate_pool import build_quarterly_pool
 
     pools = build_quarterly_pool(hist, data_rows, top_n=pool_n)
     cut = pd.Timestamp(as_of)
@@ -198,6 +198,8 @@ def main():
         _log(f"新聞來源：FinMind（lookback {args.news_lookback} 天、cutoff {_np.cutoff}）")
     else:
         os.environ.pop("NEWS_PROVIDER", None)
+
+    from core.candidate_pool import load_historical_shares
 
     hist, _hs = load_historical_shares()
     data_rows, px = {}, {}

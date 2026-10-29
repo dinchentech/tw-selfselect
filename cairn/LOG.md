@@ -2,6 +2,16 @@
 
 本檔以倒序記錄實質推進（最新在最上面，緊接這行之下）。每則保持精簡——只寫摘要與指標，結論沉澱到 `cairn/<主題>.md`。
 
+## 2026-10-29 · 修 CI 紅燈：`ai_pick_ab.py` 的 `NameError`（v1.1.1 → v1.1.2）
+
+- GitHub Actions 的 `tests` 從 v1.1.0 那次就紅：靜態檢查（pyflakes，只把 undefined name 當錯）
+  抓到 `scripts/ai_pick_ab.py:202 undefined name 'load_historical_shares'`——`load_historical_shares()` 只在
+  `honest_pool()` 裡 import，真正呼叫在 `main()` ⇒ **A/B 工具一跑就 NameError**，本機測試沒覆蓋到這條路徑。
+- 修法：`honest_pool()` 移除用不到的 import、`main()` 補上 `from core.candidate_pool import load_historical_shares`。
+- 版號 `1.1.1 → 1.1.2`（依「改程式就 +1」）。本地用與 CI 相同條件跑過 pyflakes：**全 repo 無 undefined name**。
+- 教訓：CI 的 static check 是「本機 pytest 看不到的執行期錯誤」守門員；改完 import 結構要順手跑一次
+  `pyflakes selfselect_trader.py core scripts strategies data utils | grep -i "undefined name"`。
+
 ## 2026-10-29 · v1.1.1：儀表板發佈改推 `dash` 分支（解決「人手 push 被拒」）
 
 - 問題：`publish_dashboard.sh` 的發佈工作區（VM 上的 sparse clone）每天 13:50 直接推 `main`
