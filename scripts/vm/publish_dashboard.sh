@@ -1,24 +1,26 @@
 #!/bin/bash
 # ══════════════════════════════════════════════════════════════════════════
-# 把 VM 上產生的儀表板推到 GitHub Pages（docs/index.html）
+# 把 VM 上產生的儀表板推到 GitHub Pages（發佈分支 gh-pages 的根目錄 index.html）
 #
 #   /usr/local/bin/publish_dashboard.sh          # 由 cron（台北 13:50、週一至五）呼叫
 #   DRY_RUN=1 ./publish_dashboard.sh             # 只比對不 push
 #
 # 為什麼要這支（2026-10-27 使用者指定）：
 #    儀表板由 selfselect_trader.py 在台北 13:45 產生（logs/dashboard.html），
-#    但 GitHub Pages 站台只認 repo 裡 docs/index.html，而且 pages.yml 只在
-#    「push 到發佈分支且改到 docs/」時才部署 ⇒ 沒有這支，公開頁永遠停在手動更新那天。
+#    但 GitHub Pages（Source: Deploy from a branch → gh-pages / root）只認該分支的 index.html
+#    ⇒ 沒有這支，公開頁永遠停在手動更新那天。
 #
 # 機制：VM 的 ~/tw-selfselect 沒有 .git（deploy_source.sh 是 scp 上傳），
-#    所以另外用一個**只取 docs/ 的 sparse clone**（~ /dash-publish）當發佈工作區，
-#    每次執行都 reset 到 origin/<發佈分支> 再覆蓋檔案、commit、push。
+#    所以另外用一個**只放發佈檔案的 clone**（~ /dash-publish，`BRANCH` 預設 `gh-pages`）當發佈工作區，
+#    每次執行都 fetch → checkout 到 origin/<發佈分支> → 覆蓋 `index.html` → commit → push。
 #
-# ⚠️ 2026-10-29 改：發佈分支由 `main` 改成 **`dash`**（`BRANCH` 可覆寫）。
+# ⚠️ 2026-10-29 改：發佈分支由 `main` 改成專用分支 **`gh-pages`**（`BRANCH` 可覆寫）。
 #    原因：機器人每天往 `main` 推 commit，會讓「人手推的那一邊」永遠落後 1 個 commit
-#    ⇒ 使用者本機 commit 後 push 被拒（非 fast-forward，實際發生過 2026-10-29）。
-#    改成專用分支後，`main` 只由人推，衝突從結構上消失；Pages 仍由 GitHub Actions
-#    建置（`pages.yml` 的觸發分支已加入 `dash`），GitHub 網頁端**不用改任何設定**。
+#    ⇒ 使用者本機 commit 後 push 被拒（非 fast-forward，當天實際發生）。
+#    改專用分支後 `main` 只由人推，衝突從結構上消失。
+#    GitHub Pages 設定：Source =「Deploy from a branch」→ branch `gh-pages`、資料夾 `/ (root)`
+#    （2026-10-29 已由 API 設好並驗證線上內容一致；`.github/workflows/pages.yml` 因此移除）。
+#    ※ 先前試過「發佈到 `dash` 分支 + Actions 建置」：實測 push 到非預設分支不會觸發只存在於該分支的 workflow ⇒ 改用分支模式。
 #
 # ⚠️ 公開性：**要不要公開由使用者決定**，開關是 `.env` 的 `DASHBOARD_PUBLISH`
 #    （預設 0＝不公開；設 1 才會推）。完整儀表板含持股股數、平均成本、總資產，
@@ -39,7 +41,7 @@ CLONE="${CLONE_DIR:-$HOME/dash-publish}"
 TOKEN_FILE="${TOKEN_FILE:-$HOME/.dash-publish-token}"
 DEPLOY_KEY="${DEPLOY_KEY:-$HOME/.dash-deploy-key}"
 REPO_SLUG="${REPO_SLUG:-dinchentech/tw-selfselect}"
-BRANCH="${BRANCH:-dash}"
+BRANCH="${BRANCH:-gh-pages}"
 REMOTE_URL="https://github.com/${REPO_SLUG}.git"
 LOG="${DASH_LOG:-$HOME/tw-selfselect/logs/publish_dashboard.log}"
 ENV_FILE="${ENV_FILE:-$HOME/tw-selfselect/.env}"
@@ -104,11 +106,10 @@ TODAY=$(TZ=Asia/Taipei date '+%F')
 
 # ── 準備工作區（只取 docs/ 的 sparse clone）──────────────────────────
 if [ ! -d "$CLONE/.git" ]; then
-  say "📦 建立 sparse clone：$CLONE"
-  git clone --depth 1 --filter=blob:none --sparse \
+  say "📦 建立發佈 clone（分支 $BRANCH）：$CLONE"
+  git clone --depth 1 --filter=blob:none --branch "$BRANCH" \
     "$CLONE_URL" "$CLONE" >>"$LOG" 2>&1 \
-    || fail "clone 失敗（檢查憑證與網路）"
-  ( cd "$CLONE" && git sparse-checkout set docs >>"$LOG" 2>&1 ) || fail "sparse-checkout 失敗"
+    || fail "clone 失敗（檢查憑證與網路，或遠端沒有 $BRANCH 分支）"
 fi
 
 cd "$CLONE" || fail "無法進入 $CLONE"
@@ -117,11 +118,15 @@ cd "$CLONE" || fail "無法進入 $CLONE"
 git remote set-url origin "$REMOTE_URL" >>"$LOG" 2>&1
 git "${AUTH_ARGS[@]}" fetch --depth 1 origin "$BRANCH" >>"$LOG" 2>&1 \
   || fail "fetch 失敗（憑證失效或沒有 Contents 寫入權限？mode=${AUTH_MODE}）"
-# 用 checkout -B 讓本地分支名與發佈分支一致（舊版工作區的本地分支是 main）
+# 舊版工作區是「只取 docs/ 的 sparse clone」⇒ 先關掉 sparse，否則根目錄的 index.html 不會被 materialize
+git sparse-checkout disable >>"$LOG" 2>&1 || true
+# 用 checkout -B 讓本地分支名與發佈分支一致（舊工作區的本地分支是 main）
 git checkout -q -B "$BRANCH" "origin/$BRANCH" >>"$LOG" 2>&1 || fail "切到 origin/$BRANCH 失敗"
+git branch --set-upstream-to="origin/$BRANCH" "$BRANCH" >>"$LOG" 2>&1 || true
 
-cp "$SRC" "$CLONE/docs/index.html" || fail "複製儀表板失敗"
-git add docs/index.html
+cp "$SRC" "$CLONE/index.html" || fail "複製儀表板失敗"
+touch "$CLONE/.nojekyll"          # 不讓 Pages 跑 Jekyll（檔名含底線的資產會被吃掉）
+git add index.html .nojekyll
 if git diff --cached --quiet; then
   say "⏭ 儀表板內容與線上相同 ⇒ 不用發佈"
   exit 0

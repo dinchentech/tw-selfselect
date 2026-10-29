@@ -2,6 +2,19 @@
 
 本檔以倒序記錄實質推進（最新在最上面，緊接這行之下）。每則保持精簡——只寫摘要與指標，結論沉澱到 `cairn/<主題>.md`。
 
+## 2026-10-29 · v1.1.3：儀表板改走 `gh-pages` 分支模式（`dash`＋Actions 方案作廢）
+
+- `dash` 方案**實測失敗**：把發佈改推專用 `dash` 分支、並在 `pages.yml` 觸發分支加入 `dash` 之後，
+  推 `dash` **完全沒有觸發 workflow**（`gh run list`／API 都 empty）⇒ GitHub 對非預設分支的 push
+  不會執行「只存在於該分支」的 workflow。dash 分支已刪。
+- 最終做法（已生效並驗證）：**GitHub Pages 分支模式**——Source = `Deploy from a branch` → `gh-pages` / `(root)`；
+  `publish_dashboard.sh` 的 `BRANCH` 預設改 `gh-pages`，改寫**根目錄** `index.html`（＋`.nojekyll`），
+  舊工作區的 sparse 設定自動關掉；`.github/workflows/pages.yml` 移除。
+- 驗證：切換來源後 `curl` 公開頁 **HTTP 200**、內容 sha1 與 `docs/index.html` **完全相同** ⇒ 零停機；`gh api .../pages` 顯示
+  `build_type=legacy, source={branch: gh-pages, path: /}`。
+- 版號 `1.1.2 → 1.1.3`（依「改程式就 +1」）。部署仍待使用者手動 `./deploy_source.sh`。
+- 備註：`main` 上的 `docs/index.html` 保留當「人看的來源快照」，不再自動更新；實際發佈看 `gh-pages`。
+
 ## 2026-10-29 · 修 CI 紅燈：`ai_pick_ab.py` 的 `NameError`（v1.1.1 → v1.1.2）
 
 - GitHub Actions 的 `tests` 從 v1.1.0 那次就紅：靜態檢查（pyflakes，只把 undefined name 當錯）

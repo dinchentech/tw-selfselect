@@ -69,23 +69,27 @@ sudo tail -3 /var/log/tw_watchdog.log /var/log/tw_restart_guard.log
 
 ## 儀表板自動發佈（2026-10-27 新增）
 
-公開頁 <https://dinchentech.github.io/tw-selfselect/> 由 `.github/workflows/pages.yml` 從 repo 的 `docs/` 建置，而 workflow 只在 **push 到 `main` 或 `dash` 且改到 `docs/`** 時才部署。
-
-> ⚠️ **2026-10-29 改：機器人只推 `dash` 分支，不再推 `main`**。原本發佈工作區直接推 `main`，
-> 於是每天 13:50 之後遠端 `main` 都多一個「儀表板：自動發佈」commit ⇒ 使用者本機 commit 後 push 會被拒
-> （非 fast-forward，當天實際發生）。改成專用分支後 `main` 只由人推，衝突從結構上消失；
-> **GitHub Pages 設定不用動**（Source 仍是「GitHub Actions」）。儀表板本身由 `selfselect_trader.py` 在**台北 13:45**（`m >= 45` + `report_due('daily_report')`）產生到 `logs/dashboard.html`，兩者之間的橋就是：
+公開頁 <https://dinchentech.github.io/tw-selfselect/> 由 **`gh-pages` 分支**（根目錄 `index.html`）提供：
+GitHub Pages → Settings → Pages → Source =「Deploy from a branch」→ branch `gh-pages`、資料夾 `/ (root)`
+（2026-10-29 由 API 設好並驗證線上內容與 `docs/index.html` 一致）。
+儀表板本身由 `selfselect_trader.py` 在**台北 13:45**（`m >= 45` + `report_due('daily_report')`）產生到 `logs/dashboard.html`，兩者之間的橋就是：
 
 ```
 13:45  容器產生 logs/dashboard.html
 13:50  /usr/local/bin/publish_dashboard.sh（/etc/cron.d/publish_dashboard，週一至五）
-         ├ fetch origin/dash → checkout -B dash（工作區是拋棄式的；舊工作區本地分支是 main 也能直接切換）
-         ├ cp logs/dashboard.html → ~/dash-publish/docs/index.html
-         └ commit + push origin dash → pages.yml 觸發 → 1–2 分鐘後上線
+         ├ fetch origin/gh-pages → checkout -B gh-pages（工作區是拋棄式的；順手關掉舊的 sparse）
+         ├ cp logs/dashboard.html → ~/dash-publish/index.html（＋ .nojekyll）
+         └ commit + push origin gh-pages → Pages 分支模式約 1 分鐘後上線
 14:00  VM 由 GCP 排程關機（所以 13:50 是唯一安全窗）
 ```
 
-- **VM 的 `~/tw-selfselect` 沒有 `.git`**（`deploy_source.sh` 是 scp 上傳），所以另建一個只取 `docs/` 的 sparse clone `~/dash-publish` 當發佈工作區（發佈分支 `dash`，`BRANCH=` 可覆寫）；不要對部署目錄跑 `git init`，會與 scp 上傳打架。
+> ⚠️ **為什麼不推 `main`、也不走 Actions（2026-10-29 兩次修正）**
+> ① 原本機器人每天往 `main` 推「儀表板：自動發佈」commit ⇒ 使用者本機 commit 後 push 被拒（非 fast-forward，當天實際發生）。
+> ② 接著試「推專用 `dash` 分支 + `pages.yml` 觸發分支加 `dash`」：**實測 push 到非預設分支不會觸發**只存在於該分支的 workflow
+> （`gh run list` 完全沒有跑），所以作廢並刪掉 `dash` 分支。③ 最終採 **Pages 分支模式 + `gh-pages`**：
+> 不需要 Actions、不需要預設分支、`main` 只由人推 ⇒ 結構上不會再撞。`.github/workflows/pages.yml` 已移除。
+
+- **VM 的 `~/tw-selfselect` 沒有 `.git`**（`deploy_source.sh` 是 scp 上傳），所以另建一個小型 clone `~/dash-publish` 當發佈工作區（發佈分支 `gh-pages`，`BRANCH=` 可覆寫；舊工作區的 sparse 設定會被自動關掉）；不要對部署目錄跑 `git init`，會與 scp 上傳打架。
 - **憑證（二選一，`scripts/vm/publish_dashboard.sh` 內建優先序）**：
   ① **deploy key（現行、推薦，不會過期）**：`~/.dash-deploy-key`（ed25519，600）＋私鑰對應的公鑰已加進 GitHub repo → Settings → Deploy keys（勾 Allow write access）；
   腳本走 SSH（`git@github.com:<repo>.git`＋`GIT_SSH_COMMAND` 帶 `IdentitiesOnly`／`accept-new`），log 會印 `🔑 憑證：deploy key`。
