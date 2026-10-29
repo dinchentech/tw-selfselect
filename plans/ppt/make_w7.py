@@ -127,7 +127,8 @@ def _bullets(slide, items, left, top, width, height, size=17, gap=6):
         p.level = level
         p.space_after = Pt(gap)
         run = p.add_run()
-        run.text = ("• " if level == 0 else "– ") + text
+        bare = text[:1] in "0123456789📌→"          # 已經有編號或圖示就不再疊項目符號
+        run.text = ("" if bare else ("• " if level == 0 else "– ")) + text
         run.font.size = Pt(size if level == 0 else size - 2)
         run.font.bold = emphasis
         run.font.color.rgb = ACCENT if emphasis else INK
@@ -195,15 +196,18 @@ def build():
     s = _content_slide(prs, "這一集要回答的四個問題", "1 分鐘",
                        "先給大家一張地圖，四頁之後你就知道整集的骨架。\n\n"
                        "第一，新加的 zscore 和 AI 選股是什麼、回測結果如何。第二，zscore 有哪些重要參數可以調。"
-                       "第三，AI 選股實際上怎麼操作。第四，還有哪些明顯的改進空間——這一段我會直接說我們還不夠好的地方。",
-                       "四個問題寫在學員手冊當複習提綱，講完每一段可以回頭指一次。")
+                       "第三，AI 選股實際上怎麼操作。第四，還有哪些明顯的改進空間——這一段我會直接說我們還不夠好的地方。\n\n"
+                       "最後那句總結請大家記住：換了評分、多了 AI 選項，但兩者都還沒站穩。從 2026-10-30 起我們才開始真正的實測，"
+                       "之後會持續改進；所有最新數字、參數與更新都在 Git 專案上，講義拿到的是當天版本。",
+                       "課程結束後把 Git 專案網址留給學員；提醒他們數字會更新，回測結論以 repo 內文件為準。")
     _bullets(s, [
         ("1. zscore（預設）＋ AI 選股 是什麼？回測結果如何？", 0, False),
         ("2. zscore 有哪些重要參數？哪些該調、哪些不要碰？", 0, False),
         ("3. AI 選股怎麼用？D1 手動、逾期自動 fallback 的流程", 0, False),
         ("4. 可能的改進方式：哪幾個缺口最該先補", 0, False),
         ("一句話總結：預設從 legacy 換成 zscore，並多了「AI 當選股員」這個選項；但兩者都還沒站穩", 0, True),
-    ], Inches(0.9), BODY_TOP + Inches(0.15), Inches(11.5), Inches(3.6), size=19, gap=10)
+        ("自 2026-10-30 起開始實測、持續改進；最新更新請上 Git 專案：github.com/dinchentech/tw-selfselect", 0, False),
+    ], Inches(0.9), BODY_TOP + Inches(0.1), Inches(11.5), Inches(4.1), size=18, gap=9)
 
     # ── S3 為什麼要改（1.0 → 1.1）──────────────────────────────
     s = _content_slide(prs, "為什麼要改？v1.0 的三個問題", "2 分鐘",
@@ -506,14 +510,18 @@ def build():
                        "收尾。三個數字：預設口徑 +762.4%（0050 +477.6%）、回撤 −53.7%（0050 −34%）、夏普 0.95（0050 1.06）。"
                        "兩個動作：一是想回舊行為設 SELFSELECT_PRESET=current，二是想試 AI 選股設 SELFSELECT_AI=1 然後按五步流程跑一次。"
                        "一個提醒：這仍是樣本內結果，還沒有 walk-forward，先小額或紙上跑一段再說。\n\n"
-                       "作業：挑一個改進項目做一次 A/B（例如把產業上限接進實盤），下次上課報告你的數字與口徑。",
-                       "最後留 30 秒問答；把 README 的「改進空間」與 cairn/LOG 指給學員當延伸閱讀。")
+                       "作業：挑一個改進項目做一次 A/B（例如把產業上限接進實盤），下次上課報告你的數字與口徑。\n\n"
+                       "另外要說清楚這門課的節奏：從 2026-10-30 起才開始真正的實測與持續改進，"
+                       "所以講義上的數字是「當天版本」，之後每一次程式修改都會升版號並更新到 Git 專案。"
+                       "要看最新版、最新回測與最新的改進清單，一律以 Git 專案為準。",
+                       "最後留 30 秒問答；把 Git 專案網址、README 的「改進空間」與 cairn/LOG 一起指給學員當延伸閱讀。")
     _bullets(s, [
         ("三個數字：+762.4%（0050 +477.6%）／回撤 −53.7%（−34.0%）／夏普 0.95（1.06）", 0, False),
         ("兩個動作：想回舊行為 SELFSELECT_PRESET=current；想試 AI 選股 SELFSELECT_AI=1 跑五步流程", 0, False),
         ("一個提醒：這是樣本內結果，沒有 walk-forward；先小額或紙上跑一段，再決定要不要當正式口徑", 0, True),
         ("作業：挑一個改進項目做 A/B（例：產業上限接進實盤），下次報告數字與口徑", 0, False),
-    ], Inches(0.9), BODY_TOP + Inches(0.3), Inches(11.5), Inches(3.2), size=19, gap=12)
+        ("📌 自 2026-10-30 起開始實測、持續改進；最新更新請上 Git 專案：github.com/dinchentech/tw-selfselect", 0, False),
+    ], Inches(0.9), BODY_TOP + Inches(0.2), Inches(11.5), Inches(3.9), size=18, gap=11)
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(OUT))
