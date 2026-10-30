@@ -35,7 +35,7 @@ W4 另補「keep_wait 人工管理怎麼用」一頁，對應 `策略說明.md` 
 | `TW-SELFSELECT台股買賣自動化系統-W4-講稿版.pptx` | 28（原 39；新增 2 頁：auto 型態感知、keep_wait 人工管理）|
 | `TW-SELFSELECT台股買賣自動化系統-W5-講稿版.pptx` | 26 |
 | `TW-SELFSELECT台股買賣自動化系統-W6-講稿版.pptx` | 24（原 21；新增 4 頁：完整流程、生命週期、賣出後會不會補選、母專案自選股回測）|
-| `TW-SELFSELECT台股買賣自動化系統-W7-講稿版.pptx` | 18（新編：v1.1 之後的 zscore（預設）＋ AI 選股／重要參數／AI 選股實作／可能的改進）|
+| `TW-SELFSELECT台股買賣自動化系統-W7-講稿版.pptx` | 19（新編：v1.1 之後的 zscore（預設）＋ AI 選股／重要參數／AI 選股實作／可能的改進／最後的風險與獲利抉擇提醒）|
 
 ## W7（2026-10-30 新增，講稿版）
 
@@ -43,7 +43,10 @@ W4 另補「keep_wait 人工管理怎麼用」一頁，對應 `策略說明.md` 
 
 - 產生器：`plans/ppt/make_w7.py`（沿用 W6 的母版與版型，刪光範例頁後用 python-pptx 重畫 18 頁＋講稿備註）。
   重新產生：`.venv/bin/python plans/ppt/make_w7.py`
-- 講解腳本：`TW-SELFSELECT台股買賣自動化系統-W7-解說腳本.md`（由 `notes_to_script.py` 從備註反推，18 頁／約 40 分 30 秒）。
+- 講解腳本：`TW-SELFSELECT台股買賣自動化系統-W7-解說腳本.md`（由 `notes_to_script.py` 從備註反推，19 頁／約 43 分 30 秒）。
+- 2026-10-30 追加：S14 定義 D1／D2；S7 加「產業上限」同一天名單對照實例；S16「產業上限已接進實盤、待定預設值」措辭更正；
+  新增 S19「選股很重要，但代價是風險」——v1.0 legacy（+207.9%／MDD −36.0%／夏普 0.69）vs v1.1 預設（+762.4%／−53.7%／0.95），
+  提醒「風險與獲利的取捨由使用者決定」。
 - 內容與數字口徑：2016-2025、正常組、含成本、`PROFILE=default`（停泊 0050＋大盤年線），資料快照
   宇宙 672 檔、PER 672/672、月營收 645/672；三個 preset（current +411.1%／revenue +762.4%／aggressive +1323.6%）與 0050（+477.6%）。
 - 尚未做配音版／MP4（需要 `plans/generate_narration.sh build` 重跑 TTS，本次未執行）。
