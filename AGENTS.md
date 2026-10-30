@@ -42,9 +42,10 @@
 
 ## 版本與部署（2026-10-29 硬規則）
 
-- **程式有修改就要版號 +1**（`core/version.py` 的 `APP_VERSION`，`1.1.0`→`1.1.1`）；純文件不動版號；**大升版由使用者通知**。
-- **`deploy_source.sh` 一律由使用者手動執行**：AI agent／自動化不得代跑部署、不得 SSH 重啟 VM 容器；只準備程式與版號並提醒使用者跑。
-- 版號出現在啟動 banner、Telegram 啟動／收盤、儀表板標題 ⇒ 換版後 VM 上一眼可確認。
+- **只有「程式本身」的修改才版號 +1**（`core/version.py` 的 `APP_VERSION`）：`core/`／`scripts/`／`strategies/`／`data/`／`utils/`／`selfselect_trader.py`。
+- **非程式變更不要動版號**（2026-10-30 裁定）：教材（`plans/`、含 `plans/ppt/*.py` 產生器與 pptx/mp4）、文件（`*.md`、`cairn/`）、
+  `.env`／cache／報告 JSON 都算這類；**大升版由使用者通知**。
+- **`deploy_source.sh` 一律由使用者手動執行**：AI agent／自動化不得代跑部署、不得 SSH 重啟 VM 容器；版號出現在啟動 banner／Telegram／儀表板，換版後 VM 上一眼可確認。
 
 ## 文件協作規則
 
@@ -56,5 +57,4 @@
 
 ## 知識沉澱規則
 
-- 每次實質推進後，在 `cairn/LOG.md` 最上方加一則（摘要＋指標），結論沉澱進 `cairn/` 知識專題文件。
-- 跨專案可複用的經驗，等連接知識庫後再經畢業機制沉澱。
+- 每次實質推進後，在 `cairn/LOG.md` 最上方加一則（摘要＋指標），結論沉澱進 `cairn/` 知識專題文件；跨專案可複用的經驗等連接知識庫後再經畢業機制沉澱。

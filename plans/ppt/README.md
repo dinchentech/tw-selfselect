@@ -49,7 +49,9 @@ W4 另補「keep_wait 人工管理怎麼用」一頁，對應 `策略說明.md` 
   提醒「風險與獲利的取捨由使用者決定」。
 - 內容與數字口徑：2016-2025、正常組、含成本、`PROFILE=default`（停泊 0050＋大盤年線），資料快照
   宇宙 672 檔、PER 672/672、月營收 645/672；三個 preset（current +411.1%／revenue +762.4%／aggressive +1323.6%）與 0050（+477.6%）。
-- 尚未做配音版／MP4（需要 `plans/generate_narration.sh build` 重跑 TTS，本次未執行）。
+- 配音版／MP4（2026-10-30 產出）：`…-W7-配音版.pptx`（每頁右下角喇叭）＋ `…-W7-配音版.mp4`
+  （1920×1080、**1,127 秒／18 分 47 秒**；TTS 配音總長 18.9 分鐘）。兩者依 `.gitignore` 不進版控。
+  重建：`bash plans/generate_narration.sh build <講稿版.pptx> <解說腳本.md>` → `HOME=$PWD/TMP/lohome bash plans/ppt_to_mp4.sh <配音版.pptx> plans/ppt/_narration_…`
 
 ## 配音版與 MP4（2026-10-27 重製）
 
@@ -67,6 +69,7 @@ W4 另補「keep_wait 人工管理怎麼用」一頁，對應 `策略說明.md` 
 | W4 | 28 | 20 分 14 秒 | 1,201 s |
 | W5 | 26 | 21 分 42 秒 | 1,291 s |
 | W6 | 24 | 25 分 05 秒 | 1,494 s |
+| W7 | 19 | 18 分 55 秒 | 1,127 s |
 
 重建方式（先 `build` 合成旁白並寫回講稿備註，再轉 MP4）：
 
