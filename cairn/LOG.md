@@ -2,6 +2,19 @@
 
 本檔以倒序記錄實質推進（最新在最上面，緊接這行之下）。每則保持精簡——只寫摘要與指標，結論沉澱到 `cairn/<主題>.md`。
 
+## 2026-10-30 · 部署 1.1.3 完成＋修好儀表板發佈（cron 用的是主機腳本，deploy 不會更新）
+
+- 使用者手動部署成功：VM `v1.1.3 / a2c9aa80`（與本機一致），5 檔持倉、watchdog 正常；`~/tw-autotrader` 舊容器依設計被停
+  （使用者確認已不再使用該專案）。
+- **發現並修好一個運維缺口**：cron 執行的是 VM 主機 `/usr/local/bin/publish_dashboard.sh`，`deploy_source.sh` **不會**更新它
+  ⇒ 部署後排程仍在跑 10-28 的舊版（推 `main`），而 Pages 已改讀 `gh-pages` ⇒ 公開頁會停更（10-30 就是我手動同步救回來的）。
+  已重跑 `./scripts/vm/install_dashboard_publish.sh` 換上新版（推 `gh-pages`）。
+- 換版後 DRY_RUN 又抓到第二個 bug：`git fetch --depth 1 origin gh-pages` 不建立 `origin/gh-pages` ref，
+  `checkout -B gh-pages origin/gh-pages` 失敗（`fatal: ... is not a commit`）⇒ 改用 `FETCH_HEAD`。
+  修正後 DRY_RUN：`⏭ 儀表板內容與線上相同 ⇒ 不用發佈`（= gh-pages 已是 10-30 內容，端到端驗證通過）。
+- 版號 `1.1.3 → 1.1.4`（程式變更：發佈腳本）。**此修正不需重新部署 image**（腳本在主機）；
+  VM banner 會停在 `1.1.3`，下次部署才顯示 `1.1.4`。
+
 ## 2026-10-30 · 新規則：非程式變更不升版號（`1.1.4`～`1.1.8` 撤回 → 程式版本回到 1.1.3）
 
 - 使用者裁定：**只有程式本身（`core/`／`scripts/`／`strategies/`／`data/`／`utils/`／`selfselect_trader.py`）的修改才版號 +1**；

@@ -120,9 +120,9 @@ git "${AUTH_ARGS[@]}" fetch --depth 1 origin "$BRANCH" >>"$LOG" 2>&1 \
   || fail "fetch 失敗（憑證失效或沒有 Contents 寫入權限？mode=${AUTH_MODE}）"
 # 舊版工作區是「只取 docs/ 的 sparse clone」⇒ 先關掉 sparse，否則根目錄的 index.html 不會被 materialize
 git sparse-checkout disable >>"$LOG" 2>&1 || true
-# 用 checkout -B 讓本地分支名與發佈分支一致（舊工作區的本地分支是 main）
-git checkout -q -B "$BRANCH" "origin/$BRANCH" >>"$LOG" 2>&1 || fail "切到 origin/$BRANCH 失敗"
-git branch --set-upstream-to="origin/$BRANCH" "$BRANCH" >>"$LOG" 2>&1 || true
+# ⚠️ 用 FETCH_HEAD 而不是 origin/$BRANCH：`--depth 1` 的 fetch **不會**建立 remote-tracking ref
+#    （實測 2026-10-30：fatal: 'origin/gh-pages' is not a commit）
+git checkout -q -B "$BRANCH" FETCH_HEAD >>"$LOG" 2>&1 || fail "切到 ${BRANCH}（FETCH_HEAD）失敗"
 
 cp "$SRC" "$CLONE/index.html" || fail "複製儀表板失敗"
 touch "$CLONE/.nojekyll"          # 不讓 Pages 跑 Jekyll（檔名含底線的資產會被吃掉）
