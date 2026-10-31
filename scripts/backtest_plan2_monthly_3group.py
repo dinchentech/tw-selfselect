@@ -61,17 +61,19 @@ if _PROFILE_NAME:
           "、".join(f"{k}={v or '(空)'}" for k, v in _prof["env"].items()))
 # ── 選股口徑 preset（2026-10-29）：PRESET=current|revenue|aggressive
 #   只填「使用者沒有明示」的變數；`current` 是預設（＝與舊行為相同）。後果會印出來，不偷偷生效。
-from core.selection_presets import (DEFAULT_PRESET as _DEFAULT_PRESET, PRESETS as _PRESETS,
-                                    active_name as _preset_name, expand as _preset_expand,
-                                    warning_text as _preset_warning)
+from core.selection_presets import (DEFAULT_PRESET as _DEFAULT_PRESET, HIGH_RETURN_PRESETS as _HIGH_RETURN,
+                                    PRESETS as _PRESETS, active_name as _preset_name,
+                                    expand as _preset_expand, warning_text as _preset_warning)
 
 _PRESET = _preset_name()
 for _k, _v in _preset_expand(_PRESET, _ENV_OVERRIDES).items():
     os.environ.setdefault(_k, _v)          # 明示的環境變數一律優先（不被 preset 蓋掉）
 print(f"選股口徑 preset: {_PRESET}（{_PRESETS[_PRESET]['label']}）→ " +
       "、".join(f"{k}={os.environ.get(k)}" for k in _PRESETS[_PRESET]["knobs"]))
-if _PRESET != _DEFAULT_PRESET:
-    print(_preset_warning())
+if _PRESET == _DEFAULT_PRESET and _PRESET in _HIGH_RETURN:
+    print(_preset_warning(is_default=True, name=_PRESET))
+elif _PRESET in _HIGH_RETURN:
+    print(_preset_warning(name=_PRESET))
 
 from strategies.bollinger import bollinger_reverse_strategy
 from strategies.ma_cross import ma_cross_strategy
@@ -203,6 +205,12 @@ from core.backtest_rules import (signal_strategy, stop_hit, stop_loss_env, lever
 
 STOP_LOSS_PCT = stop_loss_env("STOP_LOSS_PCT", 0.0)
 _MF_BLOCKED = [0]      # 大盤年線濾網累計擋下的買進次數（每次跑回測重設）
+
+# 產業對照／月營收快取（由 load_data() 填入）。這裡先給空預設值：
+#   2026-10-30 預設選股口徑改成 aggressive（MAX_PER_SECTOR=2）後，`_zscore_picks()`
+#   會在沒有呼叫 load_data() 的路徑（例如單元測試）直接引用 INDUSTRY ⇒ 先前的 NameError。
+INDUSTRY: dict = {}
+REV_ROWS: dict = {}
 
 GROUPS = {
     "high_profit": {"label": "高風險（高波動）", "strats": ["ma_cross", "breakout"]},

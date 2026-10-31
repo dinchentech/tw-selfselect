@@ -203,8 +203,9 @@ if SCORING_MODEL not in ("legacy", "zscore"):
 # ── 選股口徑 preset（2026-10-29，`core/selection_presets.py`）：預設 `current`＝行為不變。
 #   `SELFSELECT_PRESET=revenue|aggressive` 才會改池大小／營收因子／產業上限，
 #   而且**只填使用者沒明示的鍵**（`SELFSELECT_FACTOR_REVENUE=0` 這類明示值一律優先）。
-from core.selection_presets import (DEFAULT_PRESET, PRESETS as _PRESETS, active_name as _preset_name,
-                                    expand as _preset_expand, warning_text as _preset_warning)
+from core.selection_presets import (DEFAULT_PRESET, HIGH_RETURN_PRESETS, PRESETS as _PRESETS,
+                                    active_name as _preset_name, expand as _preset_expand,
+                                    warning_text as _preset_warning)
 
 SELECTION_PRESET = _preset_name()
 # 實盤的「明示」只認 **SELFSELECT_ 前綴**的變數：`POOL_N`／`FACTOR_REVENUE`／`MAX_PER_SECTOR`
@@ -558,11 +559,10 @@ def main():
           f"｜池 {args.pool_n}｜營收因子 {'開' if FACTOR_REVENUE else '關'}"
           f"｜產業上限 {MAX_PER_SECTOR or '無'}")
     if SELECTION_PRESET == DEFAULT_PRESET:
-        print("   ℹ️ 預設口徑的歷史代價（2016-2025、含成本）：MDD −53.7%（0050 −34.0%）、"
-              "夏普 0.95（0050 1.06）—— +762.4% 的報酬是用更深回撤換來的；想回舊行為用 "
-              "SELFSELECT_PRESET=current")
-    else:
-        print(_preset_warning())
+        print(_preset_warning(is_default=True, name=SELECTION_PRESET))
+        print("   ℹ️ 想保守一點：SELFSELECT_PRESET=revenue（+762.4%）或 current（+411.1%）")
+    elif SELECTION_PRESET in HIGH_RETURN_PRESETS:
+        print(_preset_warning(name=SELECTION_PRESET))
 
     global data
     data, pools = load_data(args.pool_n)

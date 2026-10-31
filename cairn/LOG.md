@@ -2,6 +2,20 @@
 
 本檔以倒序記錄實質推進（最新在最上面，緊接這行之下）。每則保持精簡——只寫摘要與指標，結論沉澱到 `cairn/<主題>.md`。
 
+## 2026-10-30 · 預設選股口徑改為 `aggressive`（v1.1.4 → 1.1.5）
+
+- 使用者裁定：預設由 `revenue` 改為 **`aggressive`**（池 150＋營收因子＋產業上限 2）。`.env` 的 `SELFSELECT_POOL_N` 同步 100 → **150**。
+- 實跑補齊 aggressive 多窗口（`results/hist_windows/v11_preset_aggressive_*.json`）：
+  2016-2025 **+1323.6%／30.42%／MDD −40.2%／SR 1.15**；2016-2021 +507.8%／35.10%／−36.7%／1.29；
+  2022-2025 +134.8%／23.81%／−40.2%／0.95；2022-2026-10 +227.8%／28.01%／1.05；2023-2026-10 +366.2%／49.81%／1.58。
+- **重要觀察（已寫進 README）**：aggressive 的優勢集中在 2016-2021；**2022 起的三個窗口它輸或打平 0050**
+  （2022-2026-10：+227.8% vs +231.4%、夏普 1.05 vs 1.21）⇒ 帳面漂亮但近期沒有優勢，屬 16 組事後挑選。
+- 程式：`warning_text()` 支援 `is_default`（預設口徑也印代價）；picker／回測在 aggressive 時都印警語。
+- 文件：README 回測主表／年度拆解／preset 表／改進空間句、使用手冊 §3-0b §3-0c 與參數表、策略說明、`.env.example` 全部改為 aggressive。
+- 測試：`test_selection_presets.py` 更新（預設 knobs 150/1/2、orchestrator 池 150、預設警語）⇒ 25 passed。
+- 待辦：VM 仍是 `revenue` 口徑（`.env` 有 `SELFSELECT_PRESET=revenue`＋`POOL_N=100`）⇒ 要換成 aggressive 需改 VM `.env`（或等我代改）
+  並部署 1.1.5；W7 教材仍寫「預設 revenue」，需重出講稿版。
+
 ## 2026-10-30 · 部署 1.1.3 完成＋修好儀表板發佈（cron 用的是主機腳本，deploy 不會更新）
 
 - 使用者手動部署成功：VM `v1.1.3 / a2c9aa80`（與本機一致），5 檔持倉、watchdog 正常；`~/tw-autotrader` 舊容器依設計被停

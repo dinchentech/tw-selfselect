@@ -27,14 +27,14 @@ _PRESET_KEYS = ("POOL_N", "FACTOR_REVENUE", "MAX_PER_SECTOR")
 
 
 class TestPresetDefinitions(unittest.TestCase):
-    def test_default_preset_is_revenue(self):
-        """2026-10-29 使用者裁定：預設改成 revenue（池 100＋營收因子）。"""
-        self.assertEqual(DEFAULT_PRESET, "revenue")
+    def test_default_preset_is_aggressive(self):
+        """2026-10-30 使用者裁定：預設改成 aggressive（池 150＋營收因子＋產業上限 2）。"""
+        self.assertEqual(DEFAULT_PRESET, "aggressive")
 
     def test_default_preset_numbers(self):
         knobs = PRESETS[DEFAULT_PRESET]["knobs"]
         self.assertEqual((knobs["POOL_N"], knobs["FACTOR_REVENUE"], knobs["MAX_PER_SECTOR"]),
-                         ("100", "1", "0"))
+                         ("150", "1", "2"))
 
     def test_current_still_available_as_old_behaviour(self):
         knobs = PRESETS["current"]["knobs"]
@@ -42,8 +42,9 @@ class TestPresetDefinitions(unittest.TestCase):
         self.assertEqual(knobs["FACTOR_REVENUE"], "0")
         self.assertEqual(knobs["MAX_PER_SECTOR"], "0")
 
-    def test_revenue_and_aggressive_are_the_high_return_options(self):
+    def test_presets_knobs(self):
         self.assertEqual(PRESETS["revenue"]["knobs"]["FACTOR_REVENUE"], "1")
+        self.assertEqual(PRESETS["current"]["knobs"]["FACTOR_REVENUE"], "0")
         ag = PRESETS["aggressive"]["knobs"]
         self.assertEqual((ag["POOL_N"], ag["FACTOR_REVENUE"], ag["MAX_PER_SECTOR"]), ("150", "1", "2"))
 
@@ -56,13 +57,13 @@ class TestPresetDefinitions(unittest.TestCase):
         self.assertIsNone(resolve(None))
 
     def test_active_name_prefers_selfselect_then_preset_then_default(self):
-        env = {"SELFSELECT_PRESET": "aggressive", "PRESET": "current"}
-        self.assertEqual(active_name(env), "aggressive")
+        env = {"SELFSELECT_PRESET": "revenue", "PRESET": "current"}
+        self.assertEqual(active_name(env), "revenue")
         self.assertEqual(active_name({"PRESET": "current"}), "current")
-        self.assertEqual(active_name({}), "revenue")
+        self.assertEqual(active_name({}), "aggressive")
 
     def test_active_name_falls_back_when_unknown(self):
-        self.assertEqual(active_name({"SELFSELECT_PRESET": "亂打"}), "revenue")
+        self.assertEqual(active_name({"SELFSELECT_PRESET": "亂打"}), "aggressive")
 
 
 class TestPresetExpansion(unittest.TestCase):
@@ -99,6 +100,10 @@ class TestHonestDisclosure(unittest.TestCase):
         self.assertIn("−40.2%", desc)
         self.assertIn("0050", desc)
         self.assertIn("walk-forward", desc)
+
+    def test_default_warning_mentions_default(self):
+        from core.selection_presets import warning_text
+        self.assertIn("預設選股口徑", warning_text(is_default=True))
 
 
 class TestLiveFactorKnobs(unittest.TestCase):
@@ -143,12 +148,12 @@ class TestLiveFactorKnobs(unittest.TestCase):
                 mock.patch("dotenv.main.load_dotenv", lambda *a, **k: None):
             return importlib.reload(picker)
 
-    def test_default_is_revenue(self):
+    def test_default_is_aggressive(self):
         p = self._reload()
-        self.assertEqual(p.SELECTION_PRESET, "revenue")
-        self.assertTrue(p.FACTOR_REVENUE, "預設（revenue）應開啟營收因子")
-        self.assertEqual(p.MAX_PER_SECTOR, 0)
-        self.assertEqual(p.PRESET_KNOBS.get("POOL_N"), "100")
+        self.assertEqual(p.SELECTION_PRESET, "aggressive")
+        self.assertTrue(p.FACTOR_REVENUE, "預設（aggressive）應開啟營收因子")
+        self.assertEqual(p.MAX_PER_SECTOR, 2, "預設（aggressive）應套用產業上限 2")
+        self.assertEqual(p.PRESET_KNOBS.get("POOL_N"), "150")
 
     def test_current_opt_out_turns_factor_off(self):
         p = self._reload(SELFSELECT_PRESET="current")
@@ -157,10 +162,10 @@ class TestLiveFactorKnobs(unittest.TestCase):
 
     def test_backtest_only_keys_do_not_leak_into_live(self):
         """`FACTOR_REVENUE` / `POOL_N`（回測旋鈕）躺在同一份 .env 時，不能偷改實盤設定。"""
-        p = self._reload(FACTOR_REVENUE="0", POOL_N="20", MAX_PER_SECTOR="2")
+        p = self._reload(FACTOR_REVENUE="0", POOL_N="20", MAX_PER_SECTOR="0")
         self.assertTrue(p.FACTOR_REVENUE, "實盤只看 preset 與 SELFSELECT_*，不看回測旋鈕")
-        self.assertEqual(p.MAX_PER_SECTOR, 0)
-        self.assertEqual(p.PRESET_KNOBS.get("POOL_N"), "100")
+        self.assertEqual(p.MAX_PER_SECTOR, 2)
+        self.assertEqual(p.PRESET_KNOBS.get("POOL_N"), "150")
 
     def test_preset_current_turns_factor_off(self):
         p = self._reload(SELFSELECT_PRESET="current")
@@ -168,10 +173,10 @@ class TestLiveFactorKnobs(unittest.TestCase):
         self.assertFalse(p.FACTOR_REVENUE)
         self.assertEqual(p.MAX_PER_SECTOR, 0)
 
-    def test_preset_aggressive_sets_cap_and_pool(self):
-        p = self._reload(SELFSELECT_PRESET="aggressive")
-        self.assertEqual(p.MAX_PER_SECTOR, 2)
-        self.assertEqual(p.PRESET_KNOBS.get("POOL_N"), "150")
+    def test_preset_revenue_is_the_middle_option(self):
+        p = self._reload(SELFSELECT_PRESET="revenue")
+        self.assertEqual(p.MAX_PER_SECTOR, 0)
+        self.assertEqual(p.PRESET_KNOBS.get("POOL_N"), "100")
         self.assertTrue(p.FACTOR_REVENUE)
 
     def test_explicit_factor_env_beats_preset(self):
@@ -198,7 +203,7 @@ class TestOrchestratorPoolN(unittest.TestCase):
 
     def test_no_env_gives_default_preset_pool(self):
         from scripts.monthly_selfselect_run import resolve_pool_n
-        self.assertEqual(resolve_pool_n(env={}), 100)   # 預設 preset revenue 的池就是 100
+        self.assertEqual(resolve_pool_n(env={}), 150)   # 預設 preset aggressive 的池就是 150
 
 
 class TestOverrideKeysCoverSelectionKnobs(unittest.TestCase):
