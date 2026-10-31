@@ -149,15 +149,29 @@ def neighbor_grid(paths) -> list[dict]:
 
 
 # ── 回測呼叫（帶快取）──────────────────────────────────────────────
-def _mode_tag() -> str:
-    """口徑標記（寫進快取檔名）：`STRAT_MODE` ＋ 是否套 immediate 過熱閘門。
+#: 會改變回測結果的選股／口徑旋鈕（用來組快取檔名；漏掉任何一個就會沿用舊結果）。
+_CACHE_KNOBS = ("SCORING_MODEL", "FACTOR_REVENUE", "MAX_PER_SECTOR", "UNIVERSE_DELISTED",
+                "Z_OVERHEAT", "NONMOM_SLOTS", "PRERANK_R63_PCT", "W_DIST",
+                "PICK_COOLDOWN_MONTHS", "OH_ENTRY_MODE", "MAX_PCT_FROM_HIGH", "MIN_OVERHEAT")
+#: 每個旋鈕「程式碼裡的預設值」——快取鍵要用**生效值**，不能只用「有沒有設」，
+#: 否則「預設 1 卻沒寫在 env」與「舊版預設 0」會撞在同一個檔名（2026-10-31 踩到：Z_OVERHEAT 改預設後整套沿用舊結果）。
+_CACHE_DEFAULTS = {"SCORING_MODEL": "zscore", "FACTOR_REVENUE": "0", "MAX_PER_SECTOR": "0",
+                   "UNIVERSE_DELISTED": "0", "Z_OVERHEAT": "1", "NONMOM_SLOTS": "0",
+                   "PRERANK_R63_PCT": "0", "W_DIST": "0", "PICK_COOLDOWN_MONTHS": "0",
+                   "OH_ENTRY_MODE": "both", "MAX_PCT_FROM_HIGH": "7", "MIN_OVERHEAT": "2"}
 
-    為什麼必須有：2026-10-31 起「實盤口徑」＝`STRAT_MODE=form`＋`IMM_OVERHEAT=1`，
-    與早期主表用的 `group`（輪替四策略）差 664pp；若快取不分口徑，換口徑重跑會**默默沿用舊結果**。
+
+def _mode_tag() -> str:
+    """口徑標記（寫進快取檔名）：`STRAT_MODE` ＋ immediate 過熱閘門 ＋ 所有會改變結果的旋鈕。
+
+    為什麼必須有（2026-10-31 兩次踩到）：①「實盤口徑」＝`STRAT_MODE=form`＋`IMM_OVERHEAT=1` 與早期
+    `group`（輪替四策略）差 664pp；②`Z_OVERHEAT`（選股端過熱過濾）改成預設開啟後，walk-forward 因為
+    快取檔名沒帶它，**整套沿用舊結果、數字一模一樣**。⇒ 任何影響選股/口徑的環境變數都要進來。
     """
     mode = os.getenv("STRAT_MODE", "group")
     imm = "imm" if os.getenv("IMM_OVERHEAT", "0") == "1" else "noimm"
-    return f"{mode}_{imm}"
+    extra = "".join(f"_{k.lower()}-{os.getenv(k) or _CACHE_DEFAULTS[k]}" for k in _CACHE_KNOBS)
+    return f"{mode}_{imm}{extra}"
 
 
 def _cache_path(combo: str, start: str, end: str) -> Path:
@@ -244,7 +258,8 @@ def main() -> int:
                    "metric": args.metric, "train_start": args.train_start,
                    "oos_years": years,
                    "strat_mode": os.getenv("STRAT_MODE", "group"),
-                   "imm_overheat": os.getenv("IMM_OVERHEAT", "0") == "1"},
+                   "imm_overheat": os.getenv("IMM_OVERHEAT", "0") == "1",
+                   "knobs": {k: os.getenv(k) for k in _CACHE_KNOBS if os.getenv(k) is not None}},
         "rounds": [asdict(r) for r in rounds],
         "neighbor_grid": neigh,
     }

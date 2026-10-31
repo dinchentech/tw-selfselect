@@ -17,6 +17,13 @@
   依使用者裁定「**非程式本身的變更不要動版號**」**撤回**，程式版本回到 `1.1.3`。
   教材／文件／`.env`／cache／報告 JSON 的變更一律不升版號；只有 `core/`、`scripts/`、`strategies/`、`data/`、`utils/`、
   `selfselect_trader.py` 這類執行期程式的修改才 +1。
+- `1.1.11`（2026-10-31）**「選股端過熱過濾」接進 zscore 並設為預設**（使用者裁定；A 實驗）：
+  回測 `Z_OVERHEAT` 與實盤 `SELFSELECT_Z_OVERHEAT`／`Z_OVERHEAT` 預設皆為 `1`，`pick_zscore()` 現在會呼叫 `is_overheated()`。
+  實測（2016-04~2026-10、實盤口徑）：報酬 +1408.6% → **+1306.9%**（−102pp）、夏普 1.08 → **1.11**、MDD −45.6% → −46.1%
+  （剔除 10.4% 名單）。⚠️ 同時發現：開啟後 **`revenue`（+1445.2%／夏普 1.17／MDD −56.7%）在報酬與夏普上都勝過預設 `aggressive`**，
+  代價是回撤深 10.6pp —— 預設 preset 是否要換回 `revenue` 待使用者裁定。
+  另修 `walk_forward.py` 快取鍵：改為包含**所有會改變結果的旋鈕生效值**（含程式碼預設），
+  避免「預設值改了但快取檔名沒變」而沿用舊結果（本次實際踩到：A 設為預設後整套 WF 數字一模一樣）。
 - `1.1.10`（2026-10-31）新增兩個「避免追高」的回測旋鈕（**預設全關，行為不變**）：
   `Z_OVERHEAT`（把選股端人工降溫——距 52 週高 ≤7%、YTD >100%、PER >45——接進 **zscore** 路徑；
   原本只有 legacy 路徑會用，文件寫了但程式沒接）與 `PICK_COOLDOWN_MONTHS=N`（前 N 個月曾入選就不再選）。
@@ -65,7 +72,7 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 
-APP_VERSION = "1.1.10"
+APP_VERSION = "1.1.11"
 
 # ── 建置標記 ─────────────────────────────────────────────────────────────
 # ⚠️ 這裡**不是**「程式啟動時間」。原本 banner 用 `datetime.now()` 當 BUILD_DATE，

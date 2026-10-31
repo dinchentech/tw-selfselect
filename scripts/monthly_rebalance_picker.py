@@ -190,6 +190,8 @@ def is_overheated(sid, sel_date):
 # ── 評分模型（2026-10-29）：與回測 `SCORING_MODEL` 同義，預設 `zscore`（AI 代理那套公式）
 #   zscore ＝ 先篩 0<PER<=40，再 0.40·z(63日)+0.25·z(20日)+0.20·z(距52週高)+0.15·z(-PER)（共用 core/scoring.py）
 #   legacy ＝ 現行 ssg.score_stock 綜合分
+# 選股端過熱過濾要不要套進 zscore（與回測 `Z_OVERHEAT` 同義；2026-10-31 起預設開啟）
+Z_OVERHEAT = (os.getenv("SELFSELECT_Z_OVERHEAT") or os.getenv("Z_OVERHEAT") or "1").strip() == "1"
 SCORING_MODEL = os.getenv("SELFSELECT_SCORING_MODEL", os.getenv("SCORING_MODEL", "zscore")).strip().lower()
 if SCORING_MODEL not in ("legacy", "zscore"):
     SCORING_MODEL = "zscore"
@@ -286,6 +288,15 @@ def pick_zscore(pool, sel_date, top_n):
     from core.scoring import apply_sector_cap, score_rows
 
     rows = _zscore_rows(pool, sel_date)
+    # 2026-10-31：把「選股端人工降溫」也接進 zscore（與回測 `Z_OVERHEAT` 同一語義，預設開啟）。
+    #   原本這個過濾只在 legacy／舊動能路徑生效 ⇒ zscore（預設口徑）等於沒有降溫。
+    _n_oh = 0
+    if Z_OVERHEAT:
+        _before = len(rows)
+        rows = [r for r in rows if not is_overheated(r["sid"], sel_date)]
+        _n_oh = _before - len(rows)
+        if _before and not rows:
+            print("⚠️ 過熱過濾把整個池都剔除了 ⇒ 保留原候選（請檢查 MAX_PCT_FROM_HIGH／MIN_OVERHEAT）")
     ranked = score_rows(rows, use_revenue=FACTOR_REVENUE)
     if MAX_PER_SECTOR > 0:
         industry = _industry_map()
@@ -301,6 +312,7 @@ def pick_zscore(pool, sel_date, top_n):
         "n_rev": sum(1 for r in rows if r.get("rev") is not None),
         "n_ranked": len(ranked),
         "rev_on": FACTOR_REVENUE, "cap": MAX_PER_SECTOR,
+        "overheat_on": Z_OVERHEAT, "n_overheat_dropped": _n_oh,
     })
     if not ranked:
         print(f"⚠️ zscore 沒有合格候選（報告 {len(rows)} 檔、有 PER 的 {len(eligible)} 檔）")
@@ -560,7 +572,7 @@ def main():
           f"｜產業上限 {MAX_PER_SECTOR or '無'}")
     if SELECTION_PRESET == DEFAULT_PRESET:
         print(_preset_warning(is_default=True, name=SELECTION_PRESET))
-        print("   ℹ️ 想保守一點：SELFSELECT_PRESET=revenue（+762.4%）或 current（+411.1%）")
+        print("   ℹ️ 想保守一點：SELFSELECT_PRESET=revenue（+1445.2% 但回撤 −56.7%）或 current（+992.6%）")
     elif SELECTION_PRESET in HIGH_RETURN_PRESETS:
         print(_preset_warning(name=SELECTION_PRESET))
 
@@ -612,6 +624,7 @@ def main():
                       f"｜營收因子 {'開' if _Z_STATS['rev_on'] else '關'}"
                       f"｜產業上限 {_Z_STATS['cap'] or '無'}"
                       f"｜可排序 {_Z_STATS['n_ranked']} 檔"
+                      f"｜過熱{'剔除 ' + str(_Z_STATS.get('n_overheat_dropped', 0)) + ' 檔' if _Z_STATS.get('overheat_on') else '過濾 關'}"
                       f"｜實際選出 {len(selected)} 檔")
         else:
             selected = pick_normal(pool, sel_date, args.top_n, inst_ok)

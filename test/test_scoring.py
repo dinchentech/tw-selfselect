@@ -208,7 +208,8 @@ class TestPickSleeves(unittest.TestCase):
 class TestExperimentKnobs(unittest.TestCase):
     """A/B 兩個實驗旋鈕的純邏輯（2026-10-31）：預設關閉時必須完全不改變行為。"""
 
-    def test_knob_defaults_are_off(self):
+    def test_knob_defaults(self):
+        """`Z_OVERHEAT` 2026-10-31 起**預設開啟**（使用者裁定）；冷卻期仍預設關閉。"""
         import importlib.util
         from pathlib import Path
         root = Path(__file__).resolve().parent.parent
@@ -216,7 +217,7 @@ class TestExperimentKnobs(unittest.TestCase):
             "_bt_knob_probe", root / "scripts" / "backtest_plan2_monthly_3group.py")
         m = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(m)          # 只讀常數，不載資料
-        self.assertFalse(m.Z_OVERHEAT)
+        self.assertTrue(m.Z_OVERHEAT)
         self.assertEqual(m.PICK_COOLDOWN_MONTHS, 0)
 
     def test_cooldown_disabled_never_blocks(self):
@@ -228,3 +229,20 @@ class TestExperimentKnobs(unittest.TestCase):
         m = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(m)
         self.assertFalse(m._in_cooldown("2330", "2020-01-31"))
+
+
+class TestOverheatWiringParity(unittest.TestCase):
+    """選股端過熱過濾：回測與實盤的預設必須一致（都開啟），否則回測/實盤會挑不同名單。"""
+
+    def test_both_sides_default_on(self):
+        import importlib.util
+        from pathlib import Path
+        root = Path(__file__).resolve().parent.parent
+        spec = importlib.util.spec_from_file_location(
+            "_bt_wire_probe", root / "scripts" / "backtest_plan2_monthly_3group.py")
+        bt = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(bt)
+        src = (root / "scripts" / "monthly_rebalance_picker.py").read_text(encoding="utf-8")
+        self.assertTrue(bt.Z_OVERHEAT, "回測 Z_OVERHEAT 預設應為開")
+        self.assertIn('os.getenv("Z_OVERHEAT") or "1"', src, "實盤應讀同一組開關且預設開")
+        self.assertIn("is_overheated(r[\"sid\"], sel_date)", src, "pick_zscore 應套過熱過濾")

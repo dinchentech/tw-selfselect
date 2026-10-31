@@ -212,7 +212,8 @@ NONMOM_REV_MIN = float(os.getenv("NONMOM_REV_MIN", "0"))   # 非動能名單：�
 # ── 2026-10-31 新增（使用者要求量的兩個機制；預設全關 ⇒ 行為不變）────────────
 # A. `Z_OVERHEAT=1`：把「選股端人工降溫」（OVERHEAT／MAX_PCT_FROM_HIGH／MAX_YTD_GAIN／MAX_PER）
 #    也套進 **zscore 選股路徑**。現況只有 legacy 評分與舊動能路徑會用它，zscore（預設）完全沒接。
-Z_OVERHEAT = os.getenv("Z_OVERHEAT", "0") == "1"
+#    **2026-10-31 使用者裁定：預設開啟（`Z_OVERHEAT=1`）**，因為實測報酬只少 102pp、夏普 1.08→1.11（無回撤代價）。
+Z_OVERHEAT = os.getenv("Z_OVERHEAT", "1") == "1"
 # B. `PICK_COOLDOWN_MONTHS=N`：前 N 個月曾被選中的股票，這次直接不選（「最佳點已過」假設的檢驗）。
 PICK_COOLDOWN_MONTHS = int(os.getenv("PICK_COOLDOWN_MONTHS", "0"))
 HOT_EXIT_GROUPS = set(x.strip() for x in os.getenv("HOT_EXIT_GROUPS", "normal,megacap,stable").split(",") if x.strip())  # 對哪些組套用緊離場(高風險/追強除外)
