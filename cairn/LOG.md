@@ -2,6 +2,18 @@
 
 本檔以倒序記錄實質推進（最新在最上面，緊接這行之下）。每則保持精簡——只寫摘要與指標，結論沉澱到 `cairn/<主題>.md`。
 
+## 2026-10-31 · README 清理：刪掉「已作廢的第一輪」表格，並逐項核對所有回測數字
+
+- 使用者指示：「這 README 資料請確定，不可信就沒必要貼出來」。⇒ 把「第一輪改進實驗（已作廢）」整張表**從 README 刪除**
+  （含 `池 150＋營收＋產業 2 ＝ +1289.5%`、`+630.3%` 等），只留 6 行更正說明：為什麼作廢（倖存者偏差＋PER 267/672）、
+  以及「這些數字一律不要引用」。完整舊數字仍留在本 LOG 的歷史條目（可追溯，但不會被誤當成現行結果）。
+- **逐項核對（以程式比對 README ↔ results JSON）**：
+  - 主表（aggressive 多窗口 5 列）→ 與 `results/hist_windows/v11_preset_aggressive_*.json` **5/5 一致**
+  - preset 對照表 → legacy +207.9／current +411.1／revenue +762.4／aggressive +1323.6 **4/4 一致**
+  - 第二輪矩陣表（9 列）→ 與 `results/backtest_delisted_universe.json` **9/9 一致**
+  - profile 表（池 20 隔離）與六種組合（池 20）→ 與 `results/hist_windows/dl_*.json` **數值一致**
+- 結論：README 現在只剩「可重跑、有對應 JSON」的數字；作廢數字全部下架。文件變更，不動版號（維持 1.1.5）。
+
 ## 2026-10-30 · 預設選股口徑改為 `aggressive`（v1.1.4 → 1.1.5）
 
 - 使用者裁定：預設由 `revenue` 改為 **`aggressive`**（池 150＋營收因子＋產業上限 2）。`.env` 的 `SELFSELECT_POOL_N` 同步 100 → **150**。
