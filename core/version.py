@@ -17,6 +17,10 @@
   依使用者裁定「**非程式本身的變更不要動版號**」**撤回**，程式版本回到 `1.1.3`。
   教材／文件／`.env`／cache／報告 JSON 的變更一律不升版號；只有 `core/`、`scripts/`、`strategies/`、`data/`、`utils/`、
   `selfselect_trader.py` 這類執行期程式的修改才 +1。
+- `1.1.9`（2026-10-31）walk-forward 改成**實盤口徑**重跑（`STRAT_MODE=form`＋`IMM_OVERHEAT=1`，快取已分口徑）：
+  OOS 逐年串接 **+416.6%** vs 0050 +206.4%（**3 勝 3 敗**，輸 2022/2024/2025），換算年化 +31.5%；
+  六輪挑中**兩組**（`aggressive` 4 次、`pool150_rev` 2 次），訓練段領先第二名的夏普差距**最小只有 +0.01**
+  ⇒ 比輪替口徑的結論更不利（原本「六輪都挑回同一組」）。`core/selection_presets.py` 的啟動警語同步更新。
 - `1.1.8`（2026-10-31）**回測主表改用「實盤口徑」**（使用者裁定）：`STRAT_MODE=form`（＝實盤 `strategy:"auto"`
   型態路由）＋`IMM_OVERHEAT=1`（＝實盤買進前過熱閘門），2016-2025 為 **+926.5%／年化 26.23%／MDD −45.6%／夏普 1.01**
   （0050 +477.6%／−34.0%／1.06）；舊的輪替口徑 +1323.6%／1.15 降級為「上限參考」。
@@ -55,7 +59,7 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 
-APP_VERSION = "1.1.8"
+APP_VERSION = "1.1.9"
 
 # ── 建置標記 ─────────────────────────────────────────────────────────────
 # ⚠️ 這裡**不是**「程式啟動時間」。原本 banner 用 `datetime.now()` 當 BUILD_DATE，
