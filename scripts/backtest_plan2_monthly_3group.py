@@ -209,6 +209,12 @@ W_DIST = float(os.getenv("W_DIST", "0"))                   # >0=覆寫「距 52 
 NONMOM_SLOTS = int(os.getenv("NONMOM_SLOTS", "0"))         # >0=保留幾個名額給「低基期＋營收轉機」
 NONMOM_QUANTILE = float(os.getenv("NONMOM_QUANTILE", "0.3"))  # 非動能名單：r63 取池內後此比例
 NONMOM_REV_MIN = float(os.getenv("NONMOM_REV_MIN", "0"))   # 非動能名單：月營收 YoY 須 > 此值
+# ── 2026-10-31 新增（使用者要求量的兩個機制；預設全關 ⇒ 行為不變）────────────
+# A. `Z_OVERHEAT=1`：把「選股端人工降溫」（OVERHEAT／MAX_PCT_FROM_HIGH／MAX_YTD_GAIN／MAX_PER）
+#    也套進 **zscore 選股路徑**。現況只有 legacy 評分與舊動能路徑會用它，zscore（預設）完全沒接。
+Z_OVERHEAT = os.getenv("Z_OVERHEAT", "0") == "1"
+# B. `PICK_COOLDOWN_MONTHS=N`：前 N 個月曾被選中的股票，這次直接不選（「最佳點已過」假設的檢驗）。
+PICK_COOLDOWN_MONTHS = int(os.getenv("PICK_COOLDOWN_MONTHS", "0"))
 HOT_EXIT_GROUPS = set(x.strip() for x in os.getenv("HOT_EXIT_GROUPS", "normal,megacap,stable").split(",") if x.strip())  # 對哪些組套用緊離場(高風險/追強除外)
 # ── 硬停損（2026-09-16 新增，評估用；預設 0=關閉＝基準行為）──
 # 為什麼：實盤沒有個股停損（出場只靠策略訊號），使用者問「怎麼沒有虧 10% 退場」。
@@ -756,6 +762,30 @@ def _zscore_rows(pool, sel_date):
     return rows
 
 
+_PICK_HISTORY: dict[str, list] = {}      # sid -> 曾被選中的 sel_date（冷卻期用；每次回測重跑請重設）
+_MONTH_DAYS = 30.44
+
+
+def _reset_pick_history():
+    _PICK_HISTORY.clear()
+
+
+def _in_cooldown(sid, sel_date) -> bool:
+    """`PICK_COOLDOWN_MONTHS>0` 時，前 N 個月曾被選中 ⇒ True（這次不選）。"""
+    if PICK_COOLDOWN_MONTHS <= 0:
+        return False
+    cur = pd.Timestamp(sel_date)
+    for d in _PICK_HISTORY.get(sid, []):
+        if (cur - pd.Timestamp(d)).days < PICK_COOLDOWN_MONTHS * _MONTH_DAYS:
+            return True
+    return False
+
+
+def _record_picks(sids, sel_date):
+    for sid in sids:
+        _PICK_HISTORY.setdefault(sid, []).append(pd.Timestamp(sel_date))
+
+
 def _zscore_picks(pool, sel_date):
     """`SCORING_MODEL=zscore` 的排序（共用 `core.scoring`；回傳 `[(sid, score, True)]`）。
 
@@ -765,6 +795,9 @@ def _zscore_picks(pool, sel_date):
                               score_rows)
 
     rows = _zscore_rows(pool, sel_date)
+    if Z_OVERHEAT:
+        # A：把選股端「人工降溫」接到 zscore（只算 ≤ sel_date，無前瞻）
+        rows = [r for r in rows if not overheated(r["sid"], sel_date)]
     # 降低追高：先只在 63 日動能前 N% 裡挑（PRERANK_R63_PCT=0 ⇒ 原樣）
     mom_rows = prerank(rows, "r63", PRERANK_R63_PCT)
     w = {"dist": W_DIST} if W_DIST > 0 else None
@@ -785,13 +818,19 @@ def _zscore_picks(pool, sel_date):
 
 
 def pick_normal(pool, sel_date):
+    if PICK_COOLDOWN_MONTHS > 0:
+        _orig = list(pool)
+        _kept = [s for s in _orig if not _in_cooldown(s, sel_date)]
+        pool = _kept if _kept else _orig      # 全部都在冷卻期 ⇒ 照原樣，不讓整月空手
     _ai = _ai_picks_for(sel_date)
     if _ai:
         ok = [s for s in _ai if s in data and snap(data[s], sel_date) is not None]
         if ok:
             return ok[:TOP_N]
     if SCORING_MODEL == "zscore":
-        return _fill(_zscore_picks(pool, sel_date), pool, sel_date)[0]
+        _out = _fill(_zscore_picks(pool, sel_date), pool, sel_date)[0]
+        _record_picks(_out, sel_date)
+        return _out
     scored = []
     for sid in pool:
         df = data.get(sid)
@@ -936,6 +975,7 @@ def buy_allowed(dts):
 
 
 def run_group(gkey, leverage=None):
+    _reset_pick_history()          # 每次跑一組都從乾淨的冷卻期歷史開始
     lev = LEVERAGE if leverage is None else max(0.0, float(leverage))   # 部位放大倍數（1=不放大）
     _MF_BLOCKED[0] = 0                                                  # 每組重新計數
     _FILL_STATS.update({"months": 0, "month_short": 0, "names_added": 0})

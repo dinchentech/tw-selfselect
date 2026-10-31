@@ -203,3 +203,28 @@ class TestPickSleeves(unittest.TestCase):
         non = [(f"N{i}", 10 - i) for i in range(5)]
         self.assertEqual(len(pick_sleeves(mom, non, 5, 2)), 5)
         self.assertEqual(len(pick_sleeves(mom, non, 5, 9)), 5)
+
+
+class TestExperimentKnobs(unittest.TestCase):
+    """A/B 兩個實驗旋鈕的純邏輯（2026-10-31）：預設關閉時必須完全不改變行為。"""
+
+    def test_knob_defaults_are_off(self):
+        import importlib.util
+        from pathlib import Path
+        root = Path(__file__).resolve().parent.parent
+        spec = importlib.util.spec_from_file_location(
+            "_bt_knob_probe", root / "scripts" / "backtest_plan2_monthly_3group.py")
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)          # 只讀常數，不載資料
+        self.assertFalse(m.Z_OVERHEAT)
+        self.assertEqual(m.PICK_COOLDOWN_MONTHS, 0)
+
+    def test_cooldown_disabled_never_blocks(self):
+        import importlib.util
+        from pathlib import Path
+        root = Path(__file__).resolve().parent.parent
+        spec = importlib.util.spec_from_file_location(
+            "_bt_knob_probe2", root / "scripts" / "backtest_plan2_monthly_3group.py")
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        self.assertFalse(m._in_cooldown("2330", "2020-01-31"))
