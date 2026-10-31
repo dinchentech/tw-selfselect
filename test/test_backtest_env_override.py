@@ -106,3 +106,26 @@ class TestOverrideKeyCoverage(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBacktestPresetPrecedence(unittest.TestCase):
+    """回測端 `PRESET` 必須贏過 `.env` 的 `SELFSELECT_PRESET`（2026-10-31 修）。
+
+    事故：本機 `.env` 有 `SELFSELECT_PRESET=aggressive`，而 `active_name()` 是「`SELFSELECT_PRESET` 優先」
+    ⇒ `PRESET=current` 被默默忽略，跑出來是 aggressive 的數字（+1323.6%），卻印著「preset: current」沒人會發現。
+    """
+
+    SRC = HARNESS.read_text(encoding="utf-8")
+
+    def test_harness_prefers_PRESET_over_SELFSELECT_PRESET(self):
+        self.assertIn('os.getenv("PRESET") or _preset_name()', self.SRC,
+                      "回測端必須先看 PRESET，再退回 SELFSELECT_PRESET／預設")
+
+    def test_unknown_preset_falls_back_to_default(self):
+        self.assertIn("if _PRESET not in _PRESETS:", self.SRC)
+
+    def test_active_name_still_prefers_live_key(self):
+        """實盤（picker）維持原語義：`SELFSELECT_PRESET` 優先——修的是回測端，不是 live。"""
+        from core.selection_presets import active_name
+        self.assertEqual(active_name({"SELFSELECT_PRESET": "revenue", "PRESET": "current"}), "revenue")
+        self.assertEqual(active_name({"PRESET": "current"}), "current")

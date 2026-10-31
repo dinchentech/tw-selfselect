@@ -149,8 +149,19 @@ def neighbor_grid(paths) -> list[dict]:
 
 
 # ── 回測呼叫（帶快取）──────────────────────────────────────────────
+def _mode_tag() -> str:
+    """口徑標記（寫進快取檔名）：`STRAT_MODE` ＋ 是否套 immediate 過熱閘門。
+
+    為什麼必須有：2026-10-31 起「實盤口徑」＝`STRAT_MODE=form`＋`IMM_OVERHEAT=1`，
+    與早期主表用的 `group`（輪替四策略）差 664pp；若快取不分口徑，換口徑重跑會**默默沿用舊結果**。
+    """
+    mode = os.getenv("STRAT_MODE", "group")
+    imm = "imm" if os.getenv("IMM_OVERHEAT", "0") == "1" else "noimm"
+    return f"{mode}_{imm}"
+
+
 def _cache_path(combo: str, start: str, end: str) -> Path:
-    return CACHE / f"{combo}_{start}_{end}.json"
+    return CACHE / f"{combo}_{start}_{end}_{_mode_tag()}.json"
 
 
 def run_backtest(combo: str, pool: int, rev: int, cap: int, start: str, end: str,
@@ -231,7 +242,9 @@ def main() -> int:
     payload = {
         "config": {"combos": [{"name": n, "pool": p, "revenue": v, "cap": c} for n, p, v, c in combos],
                    "metric": args.metric, "train_start": args.train_start,
-                   "oos_years": years},
+                   "oos_years": years,
+                   "strat_mode": os.getenv("STRAT_MODE", "group"),
+                   "imm_overheat": os.getenv("IMM_OVERHEAT", "0") == "1"},
         "rounds": [asdict(r) for r in rounds],
         "neighbor_grid": neigh,
     }
@@ -253,7 +266,7 @@ def main() -> int:
                                            encoding="utf-8")
 
     # ── Markdown ────────────────────────────────────────────────
-    L = [f"# Walk-forward 前向驗證（{tag}）\n",
+    L = [f"# Walk-forward 前向驗證（{tag}；口徑 {_mode_tag()}）\n",
          f"- 候選組合：**{len(combos)}** 組（`--combos {args.combos}`）",
          f"- 訓練段：擴張式（anchored），起點 {args.train_start}，迄於測試年前一年年底",
          f"- 測試年：{years[0]}–{years[-1]}（**逐年獨立回測，完全不參與挑參數**）",

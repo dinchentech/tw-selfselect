@@ -95,9 +95,12 @@ class TestHonestDisclosure(unittest.TestCase):
             self.assertIn(must, w)
 
     def test_aggressive_desc_states_drawdown_and_caveat(self):
-        """必須寫出回撤、與 0050 的比較、以及「事後挑選／未驗證」的警語（不能只寫好處）。"""
+        """必須寫出回撤、與 0050 的比較、以及「事後挑選／尖峰」的警語（不能只寫好處）。
+
+        2026-10-31 起數字改用**實盤口徑**（`STRAT_MODE=form`＋`IMM_OVERHEAT=1`）：+926.5%／MDD −45.6%／夏普 1.01。
+        """
         desc = PRESETS["aggressive"]["desc"]
-        self.assertIn("−40.2%", desc)
+        self.assertIn("−45.6%", desc)
         self.assertIn("0050", desc)
         self.assertIn("walk-forward", desc)
 

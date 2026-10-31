@@ -17,6 +17,14 @@
   依使用者裁定「**非程式本身的變更不要動版號**」**撤回**，程式版本回到 `1.1.3`。
   教材／文件／`.env`／cache／報告 JSON 的變更一律不升版號；只有 `core/`、`scripts/`、`strategies/`、`data/`、`utils/`、
   `selfselect_trader.py` 這類執行期程式的修改才 +1。
+- `1.1.8`（2026-10-31）**回測主表改用「實盤口徑」**（使用者裁定）：`STRAT_MODE=form`（＝實盤 `strategy:"auto"`
+  型態路由）＋`IMM_OVERHEAT=1`（＝實盤買進前過熱閘門），2016-2025 為 **+926.5%／年化 26.23%／MDD −45.6%／夏普 1.01**
+  （0050 +477.6%／−34.0%／1.06）；舊的輪替口徑 +1323.6%／1.15 降級為「上限參考」。
+  同批修掉兩個會**默默算錯**的問題：
+  ① 回測端 preset 優先序——`active_name()` 原本是 `SELFSELECT_PRESET` 優先，本機 `.env` 有 `SELFSELECT_PRESET=aggressive` 時
+  `PRESET=current` 會被忽略並照跑 aggressive（實測跑 current 得到 +1323.6% 的 aggressive 結果）⇒ 回測端改為 `PRESET` 優先；
+  ② `walk_forward.py` 快取不分口徑 ⇒ 換口徑重跑會沿用舊結果，現改為檔名帶 `{mode}_{imm}`。
+  同步更新 `core/selection_presets.py` 的 preset 說明與啟動警語（改報實盤口徑，並寫明夏普全部輸 0050）。
 - `1.1.7`（2026-10-31）新增**選股口徑實驗旋鈕**（回測端、預設全關 ⇒ 行為不變）：
   `IMM_OVERHEAT`（immediate 買進也套實盤的過熱閘門）、`PRERANK_R63_PCT`／`W_DIST`（降低追高）、
   `NONMOM_SLOTS`／`NONMOM_QUANTILE`／`NONMOM_REV_MIN`（低基期＋營收轉機名額）。
@@ -47,7 +55,7 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 
-APP_VERSION = "1.1.7"
+APP_VERSION = "1.1.8"
 
 # ── 建置標記 ─────────────────────────────────────────────────────────────
 # ⚠️ 這裡**不是**「程式啟動時間」。原本 banner 用 `datetime.now()` 當 BUILD_DATE，

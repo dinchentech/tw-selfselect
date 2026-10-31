@@ -65,7 +65,12 @@ from core.selection_presets import (DEFAULT_PRESET as _DEFAULT_PRESET, HIGH_RETU
                                     PRESETS as _PRESETS, active_name as _preset_name,
                                     expand as _preset_expand, warning_text as _preset_warning)
 
-_PRESET = _preset_name()
+# ⚠️ 2026-10-31 修：回測端一律以 **`PRESET`** 為準（`SELFSELECT_PRESET` 是實盤口徑）。
+#   原本直接用 `active_name()`（`SELFSELECT_PRESET` 優先）⇒ 本機 `.env` 有 `SELFSELECT_PRESET=aggressive` 時，
+#   `PRESET=current` 會被**默默忽略**、照樣跑 aggressive（實測：跑 current 得到 +1323.6% 的 aggressive 結果）。
+_PRESET = (os.getenv("PRESET") or _preset_name() or _DEFAULT_PRESET).strip().lower()
+if _PRESET not in _PRESETS:
+    _PRESET = _DEFAULT_PRESET
 for _k, _v in _preset_expand(_PRESET, _ENV_OVERRIDES).items():
     os.environ.setdefault(_k, _v)          # 明示的環境變數一律優先（不被 preset 蓋掉）
 print(f"選股口徑 preset: {_PRESET}（{_PRESETS[_PRESET]['label']}）→ " +
