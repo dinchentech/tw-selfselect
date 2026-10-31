@@ -195,6 +195,15 @@ OH_RSI_TH = float(os.getenv("OH_RSI_TH", "80"))            # RSI(14) >此值＝�
 OH_DIST_WIN = int(os.getenv("OH_DIST_WIN", "63"))          # 距「N 日高」視窗
 OH_DIST_TH = float(os.getenv("OH_DIST_TH", "8"))           # 距 N 日高 ≤此%＝貼近高點(拒買)
 OH_ENTRY_MODE = os.getenv("OH_ENTRY_MODE", "both")         # any=任一命中拒買 / both=兩者都中才拒買(推薦, 較精準)
+# ── 選股口徑實驗旋鈕（2026-10-31，預設全關 ⇒ 行為與現況完全相同）──────────────
+# 為什麼：實測 600 筆選股 98% 站上 MA60、r63 中位 +31.5%（母體 +1.9%）、距 52 週高中位 −4.0%
+#   ⇒ 選股幾乎只輸出「已漲一大段的後段趨勢股」。這三個旋鈕分別對應三種修正。
+IMM_OVERHEAT = os.getenv("IMM_OVERHEAT", "0") == "1"       # 1=immediate 買進也套「買入當下過熱」閘門（與實盤一致）
+PRERANK_R63_PCT = float(os.getenv("PRERANK_R63_PCT", "0"))  # >0=只在 63 日動能前此% 的股票裡挑（降低追高）
+W_DIST = float(os.getenv("W_DIST", "0"))                   # >0=覆寫「距 52 週高」權重（預設 0.20；0.10=降低追高）
+NONMOM_SLOTS = int(os.getenv("NONMOM_SLOTS", "0"))         # >0=保留幾個名額給「低基期＋營收轉機」
+NONMOM_QUANTILE = float(os.getenv("NONMOM_QUANTILE", "0.3"))  # 非動能名單：r63 取池內後此比例
+NONMOM_REV_MIN = float(os.getenv("NONMOM_REV_MIN", "0"))   # 非動能名單：月營收 YoY 須 > 此值
 HOT_EXIT_GROUPS = set(x.strip() for x in os.getenv("HOT_EXIT_GROUPS", "normal,megacap,stable").split(",") if x.strip())  # 對哪些組套用緊離場(高風險/追強除外)
 # ── 硬停損（2026-09-16 新增，評估用；預設 0=關閉＝基準行為）──
 # 為什麼：實盤沒有個股停損（出場只靠策略訊號），使用者問「怎麼沒有虧 10% 退場」。
@@ -747,13 +756,26 @@ def _zscore_picks(pool, sel_date):
 
     可選：`FACTOR_REVENUE=1` 加入月營收 YoY 因子、`MAX_PER_SECTOR>0` 套用產業分散上限。
     """
-    from core.scoring import apply_sector_cap, score_rows
+    from core.scoring import (apply_sector_cap, nonmom_picks, pick_sleeves, prerank,
+                              score_rows)
 
-    ranked = score_rows(_zscore_rows(pool, sel_date), use_revenue=FACTOR_REVENUE)
+    rows = _zscore_rows(pool, sel_date)
+    # 降低追高：先只在 63 日動能前 N% 裡挑（PRERANK_R63_PCT=0 ⇒ 原樣）
+    mom_rows = prerank(rows, "r63", PRERANK_R63_PCT)
+    w = {"dist": W_DIST} if W_DIST > 0 else None
+    ranked = score_rows(mom_rows, use_revenue=FACTOR_REVENUE, weights=w)
     if MAX_PER_SECTOR > 0 and INDUSTRY:
         capped = apply_sector_cap(ranked, INDUSTRY, MAX_PER_SECTOR)     # 依原順序、超過上限者剔除
         pos = {sid: i for i, (sid, _s) in enumerate(ranked)}
         ranked = [(sid, pos[sid]) for sid in capped]                     # 分數位置保留（只影響取前 N）
+    if NONMOM_SLOTS > 0:
+        # 非動能名單：低基期（r63 池內後段）＋營收 YoY 正成長，保留 NONMOM_SLOTS 個名額
+        non = nonmom_picks(rows, NONMOM_QUANTILE, NONMOM_REV_MIN, use_revenue=FACTOR_REVENUE)
+        if MAX_PER_SECTOR > 0 and INDUSTRY:
+            _c = apply_sector_cap(non, INDUSTRY, MAX_PER_SECTOR)
+            _pos = {sid: i for i, (sid, _s) in enumerate(non)}
+            non = [(sid, _pos[sid]) for sid in _c]
+        ranked = pick_sleeves(ranked, non, TOP_N, NONMOM_SLOTS)
     return [(sid, sc, True) for sid, sc in ranked]
 
 
@@ -1034,8 +1056,11 @@ def run_group(gkey, leverage=None):
                         bucket[sid] = alloc
                         cash -= alloc
                         # EXEC=immediate(A)：選股日立即買滿；EXEC=signal(B, 自選股=等訊號)：留空倉等進場訊號(由下方逐日訊號買進)
+                        # IMM_OVERHEAT=1：immediate 買進也套「買入當下過熱」閘門（與實盤 `entry_overheat_reject()` 一致）；
+                        #   預設 0 ⇒ 回測照買，但實盤會擋掉約 1/5 的名單（口徑不一致，見 cairn/LOG）。
+                        _imm_blocked = IMM_OVERHEAT and entry_overheat(sid, dts)
                         if ((EXEC != "signal") and (px > 0) and (bucket[sid] > 5)
-                                and buy_allowed(dts)):
+                                and buy_allowed(dts) and not _imm_blocked):
                             budget = bucket[sid]
                             notional = budget * lev      # 利用率等效放大（LEVERAGE／SCALE_TO_UTIL）
                             bought = buy_cost(notional, px)

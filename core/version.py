@@ -17,6 +17,13 @@
   依使用者裁定「**非程式本身的變更不要動版號**」**撤回**，程式版本回到 `1.1.3`。
   教材／文件／`.env`／cache／報告 JSON 的變更一律不升版號；只有 `core/`、`scripts/`、`strategies/`、`data/`、`utils/`、
   `selfselect_trader.py` 這類執行期程式的修改才 +1。
+- `1.1.7`（2026-10-31）新增**選股口徑實驗旋鈕**（回測端、預設全關 ⇒ 行為不變）：
+  `IMM_OVERHEAT`（immediate 買進也套實盤的過熱閘門）、`PRERANK_R63_PCT`／`W_DIST`（降低追高）、
+  `NONMOM_SLOTS`／`NONMOM_QUANTILE`／`NONMOM_REV_MIN`（低基期＋營收轉機名額）。
+  純函式工具進 `core/scoring.py`（`prerank`／`nonmom_picks`／`pick_sleeves`），`test/test_scoring.py` 加 12 個測試。
+  當批測出兩個重要事實：① 實測 600 筆選股 98% 站上 MA60／MA200、r63 中位 +31.5%，實盤 `auto` 路由有 84.8% 落到順勢策略；
+  ② 回測主表的輪替口徑（+1323.6%／夏普 1.15）**不是實盤路徑**，實盤口徑（`STRAT_MODE=form` ＋過熱閘門）為
+  +926.5%／MDD −45.6%／夏普 1.01。三個修正方向在 2016-2025 上全部使總報酬變差（12 組網格無一勝出）。
 - `1.1.6`（2026-10-30）新增 `scripts/walk_forward.py`（前向驗證）：擴張式訓練窗逐年挑參數、只用次一年 OOS 驗證，
   輸出 OOS 串接報酬／逐年勝負／in-sample→OOS 退化，並附全期 16 組參數鄰居表（in-sample 穩健性）。
   純新增分析工具，**不改變實盤預設口徑與任何交易邏輯**。
@@ -40,7 +47,7 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 
-APP_VERSION = "1.1.6"
+APP_VERSION = "1.1.7"
 
 # ── 建置標記 ─────────────────────────────────────────────────────────────
 # ⚠️ 這裡**不是**「程式啟動時間」。原本 banner 用 `datetime.now()` 當 BUILD_DATE，

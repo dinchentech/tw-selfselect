@@ -16,7 +16,8 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from core.scoring import WEIGHTS, eligible, picks_from_rows, score_rows  # noqa: E402
+from core.scoring import (WEIGHTS, eligible, nonmom_picks, pick_sleeves,  # noqa: E402
+                          picks_from_rows, prerank, score_rows)
 
 
 def row(sid, r63=0.1, r20=0.05, dist=-0.05, per=15.0):
@@ -113,3 +114,92 @@ class TestRevenueFactorAndSectorCap(unittest.TestCase):
     def test_sector_cap_unknown_industry_grouped(self):
         from core.scoring import apply_sector_cap
         self.assertEqual(apply_sector_cap(["A", "B"], {}, 1), ["A"])
+
+
+class TestPrerank(unittest.TestCase):
+    """`prerank()`：先依動能排名縮小池子（降低追高），預設不得改變任何行為。"""
+
+    def setUp(self):
+        self.rows = [row(f"S{i}", r63=0.01 * i, per=15) for i in range(1, 11)]   # r63 1%~10%
+
+    def test_disabled_is_identity(self):
+        for kw in (None, 0, 0.0, 100, 150):
+            got = prerank(self.rows, "r63", kw)
+            self.assertEqual([r["sid"] for r in got], [r["sid"] for r in self.rows], kw)
+
+    def test_keeps_top_pct(self):
+        got = prerank(self.rows, "r63", 30)     # 前 30% ⇒ r63 >= 7% 左右
+        self.assertTrue(all(r["r63"] >= 0.07 for r in got))
+        self.assertLess(len(got), len(self.rows))
+        self.assertIn("S10", [r["sid"] for r in got])
+        self.assertNotIn("S1", [r["sid"] for r in got])
+
+    def test_missing_key_is_dropped(self):
+        rows = self.rows + [{"sid": "NO", "per": 15}]
+        got = prerank(rows, "r63", 50)
+        self.assertNotIn("NO", [r["sid"] for r in got])
+
+    def test_empty_input(self):
+        self.assertEqual(prerank([], "r63", 30), [])
+
+
+class TestNonmomPicks(unittest.TestCase):
+    """`nonmom_picks()`：低基期（r63 後段）＋營收 YoY 正成長，越落後越前面。"""
+
+    def setUp(self):
+        self.rows = [row("A", r63=0.50, per=15), row("B", r63=0.02, per=15),
+                     row("C", r63=-0.20, per=12), row("D", r63=-0.35, per=10)]
+        self.rows[0]["rev"] = 0.30      # 動能強、營收也強 ⇒ 不該進非動能名單
+        self.rows[1]["rev"] = 0.05
+        self.rows[2]["rev"] = 0.40
+        self.rows[3]["rev"] = 0.10
+
+    def test_only_lagged_with_growing_revenue(self):
+        got = [sid for sid, _s in nonmom_picks(self.rows, quantile=0.5, rev_min=0.0)]
+        self.assertNotIn("A", got)                       # 動能不在後段
+        self.assertIn("C", got)
+        self.assertIn("D", got)
+
+    def test_negative_revenue_excluded(self):
+        rows = [dict(r) for r in self.rows]
+        rows[2]["rev"] = -0.05
+        got = [sid for sid, _s in nonmom_picks(rows, quantile=0.5, rev_min=0.0)]
+        self.assertNotIn("C", got)
+
+    def test_missing_revenue_excluded(self):
+        rows = [dict(r) for r in self.rows]
+        rows[3].pop("rev")
+        got = [sid for sid, _s in nonmom_picks(rows, quantile=0.5, rev_min=0.0)]
+        self.assertNotIn("D", got)
+
+    def test_empty_when_no_revenue_data(self):
+        rows = [{"sid": "X", "r63": -0.3, "r20": -0.1, "dist": -0.4, "per": 10}]
+        self.assertEqual(nonmom_picks(rows), [])
+
+
+class TestPickSleeves(unittest.TestCase):
+    """`pick_sleeves()`：動能名單 + 非動能名額的組成，不得重複、不得超過 N。"""
+
+    def test_disabled_is_pure_momentum(self):
+        mom = [("A", 3.0), ("B", 2.0), ("C", 1.0)]
+        self.assertEqual(pick_sleeves(mom, [], 2, 0), [("A", 3.0), ("B", 2.0)])
+
+    def test_reserves_slots(self):
+        mom = [("A", 3.0), ("B", 2.0), ("C", 1.0)]
+        non = [("X", 9.0), ("Y", 8.0)]
+        got = pick_sleeves(mom, non, 3, 1)
+        self.assertEqual([x[0] for x in got], ["A", "B", "X"])
+
+    def test_no_duplicates(self):
+        mom = [("A", 3.0), ("B", 2.0)]
+        non = [("B", 9.0), ("X", 8.0)]
+        got = pick_sleeves(mom, non, 2, 2)
+        sids = [x[0] for x in got]
+        self.assertEqual(len(sids), len(set(sids)))
+        self.assertIn("X", sids)
+
+    def test_caps_at_top_n(self):
+        mom = [(f"M{i}", 10 - i) for i in range(5)]
+        non = [(f"N{i}", 10 - i) for i in range(5)]
+        self.assertEqual(len(pick_sleeves(mom, non, 5, 2)), 5)
+        self.assertEqual(len(pick_sleeves(mom, non, 5, 9)), 5)

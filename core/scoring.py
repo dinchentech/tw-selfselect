@@ -104,3 +104,77 @@ def apply_sector_cap(ranked, industry, max_per_sector=0):
         cnt[cat] = cnt.get(cat, 0) + 1
         out.append(sid)
     return out
+
+
+# ── 實驗旋鈕（2026-10-31）：降低追高／非動能名單 ─────────────────────────────
+# 背景：實測 2016-2025 的 600 筆選股，98% 站上 MA60／MA200、r63 中位 +31.5%
+# （母體中位只 +1.9%）、距 52 週高中位 −4.0% ⇒ 選股幾乎只輸出「已經漲一大段的後段趨勢股」。
+# 這兩個工具讓「不追高」與「加一點非動能名單」可以被獨立測試，**預設全關**（＝行為不變）。
+
+def prerank(rows, key="r63", keep_pct=None):
+    """先依 `key` 排名，只留前 `keep_pct`% 的人再進評分（`None`／<=0／>=100 ⇒ 原樣）。
+
+    用途：`keep_pct=30` = 「只在 63 日動能前 30% 裡挑」⇒ 池子先縮小，分數不會被少數暴衝股主導。
+    缺值（None）一律剔除（既然要靠它排名，沒有值就不該進來）。
+    """
+    if not keep_pct or keep_pct <= 0 or keep_pct >= 100:
+        return list(rows)
+    vals = sorted(float(r[key]) for r in rows if r.get(key) is not None)
+    if not vals:
+        return []
+    import numpy as np
+    thr = float(np.percentile(vals, 100.0 - float(keep_pct)))
+    return [r for r in rows if r.get(key) is not None and float(r[key]) >= thr]
+
+
+#: 非動能名單的配方（低基期＋營收轉機）：負的 r63/r20/dir 權重＝越落後越前面。
+NONMOM_WEIGHTS = {"r63": -0.30, "r20": -0.15, "dist": 0.0, "per": -0.25, "rev": 0.40}
+#: 非動能名單的預設條件：63 日動能落在池內後 30%、且月營收 YoY > 0。
+NONMOM_QUANTILE = 0.30
+NONMOM_REV_MIN = 0.0
+
+
+def nonmom_picks(rows, quantile=NONMOM_QUANTILE, rev_min=NONMOM_REV_MIN,
+                 weights=None, use_revenue=True):
+    """「低基期＋營收轉機」候選（`[(sid, score)]`，已排序）。
+
+    - 條件：`r63` 在池內後 `quantile`（預設 30%）**且**月營收 YoY `> rev_min`（預設 0）；
+      與動能名單相反，這裡刻意挑「還沒漲、但營收在成長」的股票。
+    - 沒有營收資料者剔除（這個名單的存在理由就是營收轉機）。
+    """
+    cand = [r for r in rows if r.get("r63") is not None and r.get("rev") is not None
+            and float(r["rev"]) > float(rev_min)]
+    if not cand:
+        return []
+    q = max(0.0, min(1.0, float(quantile)))
+    r63s = sorted(float(r["r63"]) for r in cand)
+    import numpy as np
+    cut = float(np.percentile(r63s, q * 100.0)) if r63s else 0.0
+    low = [r for r in cand if float(r["r63"]) <= cut]
+    if not low:
+        return []
+    w = dict(NONMOM_WEIGHTS)
+    w.update(weights or {})
+    return score_rows(low, weights=w, use_revenue=use_revenue)
+
+
+def pick_sleeves(mom_ranked, nonmom_ranked, top_n=5, nonmom_slots=0):
+    """把「動能名單」與「非動能名單」組成最終清單：先取動能 `top_n-nonmom_slots` 檔，
+    再用非動能遞補 `nonmom_slots` 檔（重的代號不重複）。`nonmom_slots<=0` ⇒ 純動能（現況）。"""
+    n = max(0, int(top_n))
+    k = max(0, min(int(nonmom_slots), n))
+    if k == 0:
+        return list(mom_ranked)[:n]
+    mom = list(mom_ranked)
+    take_mom = mom[:max(0, n - k)]
+    taken = {x[0] if isinstance(x, (tuple, list)) else x for x in take_mom}
+    extra = []
+    for item in nonmom_ranked:
+        sid = item[0] if isinstance(item, (tuple, list)) else item
+        if sid in taken:
+            continue
+        extra.append(item)
+        taken.add(sid)
+        if len(extra) >= k:
+            break
+    return take_mom + extra
