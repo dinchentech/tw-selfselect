@@ -42,14 +42,14 @@ class TestPoolNWiring(unittest.TestCase):
     """2026-10-27：候選池大小 `--pool-n`（SELFSELECT_POOL_N）接線。"""
 
     def test_resolve_pool_n(self):
-        # 2026-10-30 起預設 preset 是 aggressive ⇒ 未設定時池為 150（先前為 100）
-        self.assertEqual(msr.resolve_pool_n(None, {}), 150, "未設定時採用預設 preset aggressive 的池")
+        # 2026-10-31 起預設 preset 是 revenue ⇒ 未設定時池為 100（aggressive 時期為 150）
+        self.assertEqual(msr.resolve_pool_n(None, {}), 100, "未設定時採用預設 preset revenue 的池")
         self.assertEqual(msr.resolve_pool_n(None, {"SELFSELECT_PRESET": "revenue"}), 100)
         self.assertEqual(msr.resolve_pool_n(None, {"SELFSELECT_PRESET": "current"}), 100)
         self.assertEqual(msr.resolve_pool_n(None, {"SELFSELECT_POOL_N": "50"}), 50)
         self.assertEqual(msr.resolve_pool_n(30, {"SELFSELECT_POOL_N": "50"}), 30, "CLI 優先")
-        self.assertEqual(msr.resolve_pool_n(None, {"SELFSELECT_POOL_N": "oops"}), 150)
-        self.assertEqual(msr.resolve_pool_n(None, {"SELFSELECT_POOL_N": "0"}), 150)
+        self.assertEqual(msr.resolve_pool_n(None, {"SELFSELECT_POOL_N": "oops"}), 100)
+        self.assertEqual(msr.resolve_pool_n(None, {"SELFSELECT_POOL_N": "0"}), 100)
 
     def test_picker_cmd_includes_pool_n(self):
         import argparse

@@ -17,6 +17,11 @@
   依使用者裁定「**非程式本身的變更不要動版號**」**撤回**，程式版本回到 `1.1.3`。
   教材／文件／`.env`／cache／報告 JSON 的變更一律不升版號；只有 `core/`、`scripts/`、`strategies/`、`data/`、`utils/`、
   `selfselect_trader.py` 這類執行期程式的修改才 +1。
+- `1.1.12`（2026-10-31）**預設選股口徑改回 `revenue`**（使用者裁定；`aggressive` 僅在 10-30～10-31 期間是預設）：
+  池 100＋營收因子、無產業上限。實盤口徑（含 `Z_OVERHEAT`）2016-04~2026-10 **+1445.2%／年化 29.60%／MDD −56.7%／夏普 1.17**
+  （`aggressive` +1306.9%／28.45%／−46.1%／1.11）；2022-01~2026-10 **+283.1%／32.23%／−33.4%／1.18**（0050 +231.4%／−28.31%…／1.21）。
+  代價：**回撤 −56.7% 比 0050 深 22.7pp、夏普只打平**。`.env` 的 `SELFSELECT_POOL_N` 由 150 → **100**、
+  `SELFSELECT_PRESET` 改 `revenue`；測試（default knobs 100/1/0、picker 池 100）同步。
 - `1.1.11`（2026-10-31）**「選股端過熱過濾」接進 zscore 並設為預設**（使用者裁定；A 實驗）：
   回測 `Z_OVERHEAT` 與實盤 `SELFSELECT_Z_OVERHEAT`／`Z_OVERHEAT` 預設皆為 `1`，`pick_zscore()` 現在會呼叫 `is_overheated()`。
   實測（2016-04~2026-10、實盤口徑）：報酬 +1408.6% → **+1306.9%**（−102pp）、夏普 1.08 → **1.11**、MDD −45.6% → −46.1%
@@ -72,7 +77,7 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 
-APP_VERSION = "1.1.11"
+APP_VERSION = "1.1.12"
 
 # ── 建置標記 ─────────────────────────────────────────────────────────────
 # ⚠️ 這裡**不是**「程式啟動時間」。原本 banner 用 `datetime.now()` 當 BUILD_DATE，
