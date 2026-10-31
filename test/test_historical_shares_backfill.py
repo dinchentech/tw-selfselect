@@ -40,9 +40,26 @@ class TestSymbolNeedsFetch(unittest.TestCase):
         self.assertTrue(B.symbol_needs_fetch(data, "2330", self.YEARS))
 
     def test_symbol_with_latest_quarter_is_skipped(self):
+        """有「今天為止最新的季點」就跳過。
+
+        ⚠️ 2026-11-01 修：原本寫死 `2026-08`，到了 11 月最新季點變成 `2026-11` ⇒ 這個測試在換月當天
+        自己紅掉（與程式無關，是測試對日期的隱性依賴）。改成向 `latest_quarter_point()` 動態取，
+        測試就不會隨日期漂移（真正的行為仍由上面 `test_latest_quarter_point` 用固定 today 鎖住）。
+        """
+        latest = B.latest_quarter_point(self.YEARS)
         data = {("2330", "2025-08"): 25_932_615_521,
-                ("2330", "2026-08"): 25_932_615_521}
+                ("2330", latest): 25_932_615_521}
         self.assertFalse(B.symbol_needs_fetch(data, "2330", self.YEARS))
+
+    def test_symbol_without_todays_latest_quarter_needs_fetch(self):
+        """只有「上一個」季點、沒有最新季點 ⇒ 仍要補（這正是 2026-09-18 修掉的舊 bug 行為）。"""
+        latest = B.latest_quarter_point(self.YEARS)
+        prev = None
+        for cand in ("2025-08", "2026-02", "2026-05", "2026-08", "2026-11"):
+            if cand < latest:
+                prev = cand
+        data = {("2330", prev or "2025-08"): 25_932_615_521}
+        self.assertTrue(B.symbol_needs_fetch(data, "2330", self.YEARS))
 
     def test_unknown_symbol_needs_fetch(self):
         self.assertTrue(B.symbol_needs_fetch({}, "2330", self.YEARS))
