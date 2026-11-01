@@ -1,9 +1,13 @@
-"""core/park_asset.py — 實盤「閒置資金停泊」（2026-10-31 新增；**預設關閉**）
+"""core/park_asset.py — 實盤「閒置資金停泊」（2026-10-31 新增；**預設開啟、停泊 0050**）
 
-## 使用者裁定（2026-10-31）
+## 使用者裁定
 
-1. **預設不停泊**；要用才設 `.env` 的 `SELFSELECT_PARK_ASSET=0050`（或任一 ETF／個股；預設值就是 0050）。
-2. **只在「本月名單已建倉完成」之後**才把剩下的閒置資金停泊上去，不影響當月建倉。
+1. （2026-10-31 第一版）選項＝「不用停泊」或「使用者指定某個股停泊（慣例 0050）」。
+2. （2026-10-31 第二版，**現行**）**預設改為開啟、停泊 0050**：
+   - 未設定 `SELFSELECT_PARK_ASSET` ⇒ **停泊 `0050`**（預設行為）
+   - `SELFSELECT_PARK_ASSET=`（明確留空）⇒ **不停泊**
+   - `SELFSELECT_PARK_ASSET=00878` ⇒ 停泊該檔
+3. **只在「本月名單已建倉完成」之後**才把剩下的閒置資金停泊上去，不影響當月建倉。
 
 ## 為什麼要有它
 
@@ -37,13 +41,20 @@ DEFAULT_SYMBOL = "0050"      # 使用者指定要停泊、但沒寫標的時的�
 
 
 def park_symbol(env=None) -> str:
-    """要停泊的標的；未設定／空字串 ⇒ `""`（＝不停泊，這是預設行為）。"""
+    """要停泊的標的。
+
+    - **鍵不存在** ⇒ `DEFAULT_SYMBOL`（`0050`）＝**預設開啟**
+    - 鍵存在但值為空（`SELFSELECT_PARK_ASSET=`）⇒ `""`＝**使用者明確關閉停泊**
+    - 有值 ⇒ 該代號（ETF／個股皆可）
+    """
     src = os.environ if env is None else env
-    raw = (src.get("SELFSELECT_PARK_ASSET") or "").strip()
-    return raw
+    if "SELFSELECT_PARK_ASSET" not in src:
+        return DEFAULT_SYMBOL
+    return (src.get("SELFSELECT_PARK_ASSET") or "").strip()
 
 
 def enabled(env=None) -> bool:
+    """是否有停泊（預設 True；`SELFSELECT_PARK_ASSET=` 留空才關閉）。"""
     return bool(park_symbol(env))
 
 

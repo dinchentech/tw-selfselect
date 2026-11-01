@@ -2,7 +2,7 @@
 """`core/park_asset.py`（實盤閒置資金停泊）的純函式回歸測試。
 
 守住的規則（使用者 2026-10-31 裁定）：
-1. **預設不停泊**（未設 `SELFSELECT_PARK_ASSET` ⇒ 完全 no-op）。
+1. **預設開啟、停泊 `0050`**；只有明確寫 `SELFSELECT_PARK_ASSET=`（空字串）才是「不用停泊」。
 2. 只在 **immediate** 模式、且名單每一檔都「已持有或今天已嘗試買進」時才停泊（signal 模式不停泊）。
 3. 停泊金額不得把「已停泊的市值」再算成閒置（避免重複買）。
 4. 太小的金額不做（< MIN_PARK_NTD）；以整股買進。
@@ -25,24 +25,33 @@ from core.park_asset import (DEFAULT_SYMBOL, MIN_PARK_NTD, can_park_after_build,
 
 
 class TestSymbolAndEnabled(unittest.TestCase):
-    def test_default_is_disabled(self):
-        self.assertEqual(park_symbol({}), "")
-        self.assertFalse(enabled({}))
+    def test_default_is_enabled_with_0050(self):
+        """2026-10-31 第二版：未設定 ⇒ **預設停泊 0050**。"""
+        self.assertEqual(park_symbol({}), "0050")
+        self.assertTrue(enabled({}))
+        self.assertEqual(DEFAULT_SYMBOL, "0050")
+
+    def test_explicit_empty_turns_it_off(self):
+        """`SELFSELECT_PARK_ASSET=`（明確留空）＝使用者關閉停泊。"""
         self.assertEqual(park_symbol({"SELFSELECT_PARK_ASSET": ""}), "")
-        self.assertFalse(enabled({"SELFSELECT_PARK_ASSET": "  "}))
+        self.assertFalse(enabled({"SELFSELECT_PARK_ASSET": ""}))
+        self.assertFalse(enabled({"SELFSELECT_PARK_ASSET": "   "}))
 
     def test_user_can_specify(self):
         self.assertEqual(park_symbol({"SELFSELECT_PARK_ASSET": "0050"}), "0050")
+        self.assertEqual(park_symbol({"SELFSELECT_PARK_ASSET": "00878"}), "00878")
         self.assertTrue(enabled({"SELFSELECT_PARK_ASSET": "00878"}))
-        self.assertEqual(DEFAULT_SYMBOL, "0050")   # 文件寫「預設停泊 0050」的依據
 
     def test_reads_real_env(self):
         old = os.environ.pop("SELFSELECT_PARK_ASSET", None)
         try:
-            self.assertFalse(enabled())
+            self.assertTrue(enabled())                       # 未設定 ⇒ 預設停泊 0050
+            self.assertEqual(park_symbol(), "0050")
             os.environ["SELFSELECT_PARK_ASSET"] = "0056"
             self.assertTrue(enabled())
             self.assertEqual(park_symbol(), "0056")
+            os.environ["SELFSELECT_PARK_ASSET"] = ""
+            self.assertFalse(enabled())                      # 明確留空 ⇒ 關閉
         finally:
             os.environ.pop("SELFSELECT_PARK_ASSET", None)
             if old is not None:

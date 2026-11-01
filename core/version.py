@@ -17,6 +17,12 @@
   依使用者裁定「**非程式本身的變更不要動版號**」**撤回**，程式版本回到 `1.1.3`。
   教材／文件／`.env`／cache／報告 JSON 的變更一律不升版號；只有 `core/`、`scripts/`、`strategies/`、`data/`、`utils/`、
   `selfselect_trader.py` 這類執行期程式的修改才 +1。
+- `1.1.15`（2026-10-31）**閒置資金停泊改為預設開啟、停泊 `0050`**（使用者裁定）：
+  `.env` 不寫 `SELFSELECT_PARK_ASSET` ⇒ 停泊 0050；明確留空（`SELFSELECT_PARK_ASSET=`）⇒ 不停泊；填代號 ⇒ 停泊該檔。
+  `core/park_asset.py::park_symbol()` 的語義由「未設定＝關閉」改為「未設定＝0050」，`enabled()` 同步；
+  測試改為釘住三種情況（未設定＝0050／留空＝關閉／指定＝該檔）。行為邊界不變：只在 immediate 模式、
+  名單建倉完成後、13:25–13:30 窗口內才動作，買股前先全部釋出。
+  ⚠️ 部署後的第一個交易日，空手資金就會開始買 0050（多頭年 +25pp、空頭年放大回撤，見使用手冊 §3-0d）。
 - `1.1.14`（2026-10-31）實作**實盤「閒置資金停泊」**（`SELFSELECT_PARK_ASSET`；**預設關閉**，
   使用者裁定：留空＝不停泊，填代號才啟用，慣例 0050）。規則：只在 `SELFSELECT_EXEC_MODE=immediate`、
   且**本月名單已建倉完成**後，把閒置資金買進該檔；要買股票前**先全部賣出**停泊部位。
@@ -89,7 +95,7 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 
-APP_VERSION = "1.1.14"
+APP_VERSION = "1.1.15"
 
 # ── 建置標記 ─────────────────────────────────────────────────────────────
 # ⚠️ 這裡**不是**「程式啟動時間」。原本 banner 用 `datetime.now()` 當 BUILD_DATE，
