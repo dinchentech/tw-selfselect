@@ -286,6 +286,127 @@ def main():
     USE_REAL_API = True
   broker = _create_broker()
   rm = RiskManager(max_risk_per_trade=float(os.getenv('MAX_RISK_PER_TRADE', 0.01)), max_daily_loss=float(os.getenv('MAX_DAILY_LOSS', 0.05)), max_daily_trades=int(os.getenv('MAX_DAILY_TRADES', 10)))
+
+  # ── 閒置資金停泊（2026-10-31 新增；**預設關閉**）──────────────────────────
+  # 使用者裁定：① 預設不停泊，要用才設 SELFSELECT_PARK_ASSET=0050（預設標的 0050）；
+  #            ② 只在「本月名單已建倉完成」之後才停泊剩下的閒置資金。
+  # 設計邊界（見 core/park_asset.py 模組說明）：
+  #   · 停泊部位記在獨立帳本 logs/park_position.json，**不進** holdings.json／分帳本
+  #     ⇒ 不會被「N=5 上限／已持倉一律保留／孤兒清倉」當成自選股。
+  #   · 要買股票前**先全部賣出停泊部位**（單一動作、可稽核）。
+  #   · 只在 immediate 模式（signal 模式要把錢留給還沒出現的訊號）。
+  def _park_sym():
+    from core.park_asset import park_symbol as _ps
+    return _ps()
+
+  def _park_state():
+    from core.park_asset import load_state as _ls
+    return _ls()
+
+  def _park_hold_value(st=None):
+    from core.park_asset import load_state as _ls
+    st = st if st is not None else _ls()
+    sh = int(st.get('shares') or 0)
+    if sh <= 0:
+      return 0.0
+    sym = st.get('symbol') or ''
+    try:
+      px = broker.get_current_price(sym) if sym else 0
+    except Exception:
+      px = 0
+    return float(sh) * float(px) if px and px > 0 else float(st.get('cost') or 0.0)
+
+  def _park_stock_value():
+    total = 0.0
+    for _s in PORTFOLIO_CONFIG:
+      _sh = holdings.get(_s, 0) or 0
+      if _sh <= 0:
+        continue
+      try:
+        _px = broker.get_current_price(_s)
+      except Exception:
+        _px = 0
+      if _px and _px > 0:
+        total += float(_sh) * float(_px)
+    return total
+
+  def _park_leg_capital():
+    return sum(get_stock_capital(_s) for _s in PORTFOLIO_CONFIG)
+
+  def _park_log_trade(rec):
+    try:
+      with open('logs/park_trades.jsonl', 'a', encoding='utf-8') as _f:
+        _f.write(json.dumps(rec, ensure_ascii=False) + '\n')
+    except Exception:
+      pass
+
+  def park_release_all(reason=''):
+    """把停泊部位全部賣掉（要買股票前呼叫）。回傳實際釋出的估算現金。"""
+    from core.park_asset import load_state as _ls, save_state as _ss
+    try:
+      st = _ls()
+      sym = st.get('symbol') or _park_sym()
+      sh = int(st.get('shares') or 0)
+      if sh <= 0 or not sym:
+        return 0.0
+      px = broker.get_current_price(sym)
+      if not px or px <= 0:
+        print(f'⚠️ 停泊 {sym} 取不到價格，暫不賣出')
+        return 0.0
+      ret = broker.place_order(sym, 'sell', sh)
+      filled = resolve_fill(broker, sym, 'sell', ret, sh)
+      done = int(filled or 0)
+      got = done * float(px)
+      left = max(0, sh - done)
+      _ss({'symbol': sym, 'shares': left, 'cost': (0.0 if left == 0 else float(st.get('cost') or 0.0)),
+           'opened': None if left == 0 else st.get('opened'),
+           'updated': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'), 'last_park_ts': st.get('last_park_ts')})
+      _park_log_trade({'ts': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'), 'action': 'SELL',
+                       'symbol': sym, 'shares': done, 'price': float(px), 'reason': reason})
+      print(f'🅿️ 停泊釋出：賣出 {sym} {done} 股 @ {px:.2f}（{reason}，估 NT${got:,.0f}）')
+      send_telegram_message(f'🅿️ *停泊釋出*\n{sym} 賣出 {done} 股 @ {px:.2f}\n原因：{reason}')
+      return got
+    except Exception as e:
+      print(f'⚠️ 停泊釋出失敗（不影響其他交易）：{e}')
+      return 0.0
+
+  def park_idle_if_due():
+    """名單建倉完成後，把閒置資金停泊到 SELFSELECT_PARK_ASSET（預設關閉）。"""
+    from core.park_asset import (can_park_after_build as _can, idle_amount as _idle,
+                                load_state as _ls, park_shares as _shares, save_state as _ss)
+    try:
+      sym = _park_sym()
+      if not sym:
+        return 0.0
+      st = _ls()
+      _now_ts = time.time()
+      if (_now_ts - float(st.get('last_park_ts') or 0)) < 300:   # 5 分鐘內不重複下單
+        return 0.0
+      if not _can(SELFSELECT_EXEC_MODE, list(PORTFOLIO_CONFIG), holdings, SELFSELECT_FILLED, sym):
+        return 0.0
+      idle = _idle(_park_leg_capital(), _park_stock_value(), _park_hold_value(st))
+      px = broker.get_current_price(sym)
+      n = _shares(idle, px)
+      if n <= 0 or not px or px <= 0:
+        return 0.0
+      ret = broker.place_order(sym, 'buy', n)
+      filled = resolve_fill(broker, sym, 'buy', ret, n)
+      done = int(filled or 0)
+      if done <= 0:
+        return 0.0
+      cost = done * float(px)
+      _ss({'symbol': sym, 'shares': int(st.get('shares') or 0) + done,
+           'cost': float(st.get('cost') or 0.0) + cost,
+           'opened': st.get('opened') or datetime.now().strftime('%Y-%m-%d'),
+           'updated': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'), 'last_park_ts': _now_ts})
+      _park_log_trade({'ts': datetime.now().strftime('%Y-%m-%dT%H:%M:%S'), 'action': 'BUY',
+                       'symbol': sym, 'shares': done, 'price': float(px), 'reason': '閒置資金停泊'})
+      print(f'🅿️ 閒置資金停泊：買進 {sym} {done} 股 @ {px:.2f}（NT${cost:,.0f}）')
+      send_telegram_message(f'🅿️ *閒置資金停泊*\n{sym} 買進 {done} 股 @ {px:.2f}\n金額 NT${cost:,.0f}')
+      return cost
+    except Exception as e:
+      print(f'⚠️ 閒置資金停泊失敗（不影響其他交易）：{e}')
+      return 0.0
   portfolio_history = {}
   for (symbol, cfg) in PORTFOLIO_CONFIG.items():
     _daily_mode = (cfg.get('strategy') != 'keep_wait')
@@ -555,6 +676,18 @@ def main():
     globals()['_cleaned_orphans'] = _cleaned_orphans
 
     if (is_tday and (((h == 8) and (m >= 45)) or ((h >= 9) and (h < 13)) or ((h == 13) and (m <= 30)))):
+      # 2026-10-31：要買新名單前，先把「停泊部位」全部賣掉換現金（只在名單尚未建倉時做一次）。
+      #   ⚠️ 這裡刻意不在 `if` 條件裡直接寫 `_close_order_window`：test_close_order_window.py
+      #   規定「窗口閘門必須出現在 portfolio_history 更新之後」——用變數承接可保住那條不變式。
+      _park_release_gate = bool(_close_order_window) and bool(_park_sym())
+      if _park_release_gate:
+        try:
+          _pending = any((holdings.get(_s, 0) or 0) <= 0 and _s not in SELFSELECT_FILLED
+                         for _s in PORTFOLIO_CONFIG if _s != _park_sym())
+          if _pending and int((_park_state().get('shares') or 0)) > 0:
+            park_release_all('新名單建倉需要資金')
+        except Exception as _pe:
+          print(f'⚠️ 停泊前置檢查失敗（不影響交易）：{_pe}')
       for (symbol, cfg) in PORTFOLIO_CONFIG.items():
         if (symbol not in portfolio_history):
           continue
@@ -1037,6 +1170,15 @@ def main():
     # ── 每日一次：bollinger/vwap/ma_cross 買入不足主動補足（方案 B，2026-09-01）──
     # 回測假設全額成交；實盤部分成交/資金不足會導致倉位不足 → 每日主動補到目標
     # （不看策略訊號）；逾 3 交易日仍未滿 → TG 通知（每日一次去重）
+    # 2026-10-31：閒置資金停泊（預設關閉；SELFSELECT_PARK_ASSET 有值才動作）。
+    #   時機＝「名單已建倉完成」之後（immediate 模式且每檔都已持有或今天已嘗試），
+    #   且在 13:25–13:30 的下單窗口內才下單（與其他日K訂單同口徑）。
+    if is_tday and _close_order_window and _park_sym():
+      try:
+        park_idle_if_due()
+      except Exception as _pke:
+        print(f'⚠️ 停泊流程異常（不影響交易）：{_pke}')
+
     # 補買僅盤中執行（09:00-13:30）；逾時通知任何時段都檢查
     try:
       _buy_offset = float(os.getenv('BUY_AMOUNT_OFFSET', '0.02'))

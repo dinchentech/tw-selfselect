@@ -17,6 +17,12 @@
   依使用者裁定「**非程式本身的變更不要動版號**」**撤回**，程式版本回到 `1.1.3`。
   教材／文件／`.env`／cache／報告 JSON 的變更一律不升版號；只有 `core/`、`scripts/`、`strategies/`、`data/`、`utils/`、
   `selfselect_trader.py` 這類執行期程式的修改才 +1。
+- `1.1.14`（2026-10-31）實作**實盤「閒置資金停泊」**（`SELFSELECT_PARK_ASSET`；**預設關閉**，
+  使用者裁定：留空＝不停泊，填代號才啟用，慣例 0050）。規則：只在 `SELFSELECT_EXEC_MODE=immediate`、
+  且**本月名單已建倉完成**後，把閒置資金買進該檔；要買股票前**先全部賣出**停泊部位。
+  停泊部位記在獨立帳本 `logs/park_position.json` ＋ `logs/park_trades.jsonl`（稽核），**不進** holdings／分帳本
+  ⇒ 不被 N=5 上限／已持倉保留／孤兒清倉影響。純函式 `core/park_asset.py`（`test/test_park_asset.py` 18 tests）。
+  動機：回測主表有一半報酬來自停泊（停泊 +1445.2% vs 純現金 +656.9%）；代價是放大回撤（2022 −8.2% → −24.0%）。
 - `1.1.13`（2026-10-31）**釐清「停泊 0050」的貢獻並修正對外說法**：回測主表數字含「閒置資金押 0050」
   （平均約 35–40% 的資金），而**實盤不會自動買 ETF**（空手期領 0%）。以預設 `revenue`、2016-04~2026-10 實測：
   停泊 +1445.2%／MDD −56.7%／夏普 1.17 → **純現金（＝實盤真實）＋656.9%／−52.8%／1.02**（差 788pp）；
@@ -83,7 +89,7 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 
-APP_VERSION = "1.1.13"
+APP_VERSION = "1.1.14"
 
 # ── 建置標記 ─────────────────────────────────────────────────────────────
 # ⚠️ 這裡**不是**「程式啟動時間」。原本 banner 用 `datetime.now()` 當 BUILD_DATE，

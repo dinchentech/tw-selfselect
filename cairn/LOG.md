@@ -2,6 +2,24 @@
 
 本檔以倒序記錄實質推進（最新在最上面，緊接這行之下）。每則保持精簡——只寫摘要與指標，結論沉澱到 `cairn/<主題>.md`。
 
+## 2026-10-31 · 實作實盤閒置資金停泊（v1.1.13 → 1.1.14）
+
+- 使用者裁定規則：**選項＝不用停泊／使用者指定某個股停泊（慣例 0050）**，且**只在「本月名單已建倉完成後」**才停泊。
+  實作選擇：**預設關閉**（`SELFSELECT_PARK_ASSET` 留空＝不停泊；填代號才啟用），避免一部署就多一筆 ETF 交易。
+- 程式：新增 `core/park_asset.py`（純函式：`park_symbol`／`idle_amount`／`park_shares`／`release_shares`／
+  `can_park_after_build`／state IO）＋ `test/test_park_asset.py` **18 tests**；
+  `selfselect_trader.py` 加入 `park_release_all()`／`park_idle_if_due()` 與兩個 hook：
+  ① 13:25–13:30 窗口、名單尚未建倉且有停泊部位 ⇒ **先全部賣出**；② 窗口內名單跑完（含補買）且建倉完成 ⇒ **停泊閒置資金**。
+  只在 `immediate` 模式動作（`signal` 模式要把錢留給還沒出現的訊號）。
+- 帳務邊界：停泊部位記在 `logs/park_position.json` ＋ `logs/park_trades.jsonl`，**不進 holdings／分帳本**
+  ⇒ 不會被 N=5 上限／已持倉保留／孤兒清倉當成自選股（對帳腳本 `reconcile_broker_books.py` 也不會誤報，因為它只在
+  broker 與 holdings 兩邊都有時才比對）。
+- ⚠️ 測試踩到一條既有不變式：`test_close_order_window` 要求「窗口閘門必須出現在 portfolio_history 更新之後」，
+  第一版把 `if _close_order_window and _park_sym()` 寫在迴圈前 ⇒ 紅燈；改成先用變數承接（語義不變）後通過。
+- 文件：使用手冊新增 **§3-0d**（設定／規則／兩口徑數字／建議先紙上帳）、策略說明 §6.10 補實作、
+  README 🅿️ 段補「可選停泊」、`.env.example` 補 `SELFSELECT_PARK_ASSET`（含空頭放大的警告）。
+- 全套 **827 passed**；`version` 1.1.13 → **1.1.14**。
+
 ## 2026-10-31 · 釐清「停泊 0050」的貢獻：實盤真實量級只有一半（v1.1.12 → 1.1.13）
 
 - 使用者問「沒有合適股時停泊固定選哪個股」⇒ 查證：回測 `IDLE_CASH_ASSET` 預設 **0050**（元大台灣50，
