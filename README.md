@@ -83,13 +83,17 @@ docker compose logs -f         # 看主迴圈
 
 ## 每月作業（一句話）
 
+**`SELFSELECT_AUTO=1`（VM 現行設定）⇒ 程式自己在 D1 盤後選股、改 `.env`、發 Telegram，平常不需要手動跑任何指令**；
+你只要在 D2 13:25 前看過名單、想改再改 `.env` 即可。
+
+只有 `SELFSELECT_AUTO=0`、想先預覽名單、或想剔除幾檔時，才需要跑下面兩行：
+
 ```bash
-.venv/bin/python scripts/monthly_selfselect_run.py --risk normal --top-n 5            # 預覽
+.venv/bin/python scripts/monthly_selfselect_run.py --risk normal --top-n 5            # 預覽（不寫檔）
 .venv/bin/python scripts/monthly_selfselect_run.py --risk normal --top-n 5 --apply    # 寫入 .env（自動備份）
 ```
 
-開啟 `SELFSELECT_AUTO=1` 後，主程式會在 D1 盤後自己做（並發 Telegram 通知），
-你只要在 D2 13:25 前看過名單、想改再改 `.env` 即可。完整 SOP 見[使用手冊](使用手冊.md) §3「每月作業」。
+完整 SOP 見[使用手冊](使用手冊.md) §3「每月作業」。
 
 ## 架構
 
