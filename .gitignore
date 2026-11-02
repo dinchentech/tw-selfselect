@@ -53,7 +53,8 @@ plans/ppt/~$*
 
 # 語音流水線產物（可重新產生，不進版控）
 plans/ppt/_narration_*/
-plans/ppt/*-配音版.pptx
+# 配音版 pptx 一律不進版控（含子目錄；2026-11-02 裁定）
+plans/ppt/**/*-配音版.pptx
 plans/ppt/*.mp4
 # 子目錄的影片也排除（大檔、可用 why_to_mp4.sh 重生）
 plans/ppt/**/*.mp4
