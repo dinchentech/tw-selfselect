@@ -325,16 +325,31 @@ class EsunProvider:
         return True
 
     def get_current_price(self, symbol: str) -> float:
-        """即時報價（最後成交價）"""
+        """即時報價（最後成交價）
+
+        ⚠️ 網路層逾時／斷線**重試一次**（2026-11-02）：報價請求的上限由主程式的
+        `NET_QUOTE_TIMEOUT_SEC`（預設 8 秒）控制，一次卡滿就吃掉 13:25–13:30 下單窗口的
+        1/10；重試一次的總預算（8+8=16 秒）仍與原本一檔卡 30 秒同級，不會讓
+        `place_order` 的外層 `ESUN_PLACE_ORDER_TIMEOUT` 多等。
+        只對「逾時／連線錯誤」重試——其他錯誤（參數錯、token 失效）重試無意義。
+        """
         if not self._ensure_available():
             return 0.0
         self.login()
-        try:
-            q = self._marketdata.rest_client.stock.intraday.quote(symbol=symbol)
-            return float(q.get("lastPrice", 0))
-        except Exception as e:
-            print(f"❌ E.Sun get_current_price error: {e}")
-            return 0.0
+        for _attempt in (1, 2):
+            try:
+                q = self._marketdata.rest_client.stock.intraday.quote(symbol=symbol)
+                return float(q.get("lastPrice", 0))
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                if _attempt == 1:
+                    print(f"⚠️ {symbol} 報價逾時／斷線，重試一次（{e}）")
+                    continue
+                print(f"❌ E.Sun get_current_price error: {e}")
+                return 0.0
+            except Exception as e:
+                print(f"❌ E.Sun get_current_price error: {e}")
+                return 0.0
+        return 0.0
 
     def get_historical_data(self, symbol: str, days: int = 30) -> pd.DataFrame:
         """歷史日 K (OHLCV) — 用於初始化累積資料"""

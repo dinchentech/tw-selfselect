@@ -32,15 +32,33 @@ import sys
 # ── 網路呼叫預設 timeout（避免主迴圈卡死）──────────────────────────────
 # 根因：E.Sun / FinMind 兩支 SDK 內部的 requests 呼叫「沒有 timeout」→ 一旦連線半開
 # 會永久阻塞整個主迴圈（2026-09-10 曾卡死 8 小時、整段交易時段無輸出）。
-# 這裡統一 monkey-patch requests，未指定 timeout 的一律補上 NET_TIMEOUT_SEC 秒上限。
-_NET_TIMEOUT_SEC = float(os.getenv('NET_TIMEOUT_SEC', '30'))
-if _NET_TIMEOUT_SEC > 0:
-  _orig_session_request = requests.sessions.Session.request
-  def _session_request_with_timeout(self, method, url, **kwargs):
-    if kwargs.get('timeout') is None:
-      kwargs['timeout'] = _NET_TIMEOUT_SEC
-    return _orig_session_request(self, method, url, **kwargs)
-  requests.sessions.Session.request = _session_request_with_timeout
+# 這裡統一 monkey-patch requests，未指定 timeout 的一律補上 `request_timeout_for(url)`。
+#
+# 報價端點（intraday/quote、snapshot/quotes）另外用**較短的** NET_QUOTE_TIMEOUT_SEC：
+# 13:25–13:30 下單窗口內是**逐檔串行**取價，一檔卡滿 30 秒就吃掉窗口 1/10
+# （2026-11-02 09:00 開盤首圈實測：api.fugle.tw 一檔 30 秒無回應才被切掉）。
+_QUOTE_URL_HINTS = ('/intraday/quote/', '/snapshot/quotes/')
+def request_timeout_for(url):
+  """依 URL 決定要補上的 timeout（秒）；回 None 表示不補（= 沿用 requests 原本的無限等待）。
+
+  在呼叫當下讀 env（不是 import 時讀常數）⇒ `.env` 熱重載後立即生效。
+  """
+  try:
+    if any((h in (url or '')) for h in _QUOTE_URL_HINTS):
+      sec = float(os.getenv('NET_QUOTE_TIMEOUT_SEC', '8'))
+    else:
+      sec = float(os.getenv('NET_TIMEOUT_SEC', '30'))
+  except (TypeError, ValueError):
+    sec = 30.0
+  return (sec if sec > 0 else None)
+_orig_session_request = requests.sessions.Session.request
+def _session_request_with_timeout(self, method, url, **kwargs):
+  if kwargs.get('timeout') is None:
+    _t = request_timeout_for(url)
+    if _t is not None:
+      kwargs['timeout'] = _t
+  return _orig_session_request(self, method, url, **kwargs)
+requests.sessions.Session.request = _session_request_with_timeout
 
 # ── 主迴圈 watchdog（第二層保險）────────────────────────────────────────
 # 主迴圈每圈更新心跳；若 STALL_EXIT_SEC 秒無進展 → 強制結束程序，靠 docker
@@ -98,6 +116,11 @@ AUTO_FIXED_CACHE = load_json("logs/auto_resolved.json", {})
 # 自選股執行模式：'signal'=B（等 auto 進場訊號，預設）| 'immediate'=A（選股後立即進場一次 → 之後由訊號管理）
 SELFSELECT_EXEC_MODE = os.getenv('SELFSELECT_EXEC_MODE', 'signal')
 SELFSELECT_FILLED = load_json("logs/selfselect_filled.json", {})
+# 「今天嘗試買進但沒成交」的落地紀錄（symbol → YYYY-MM-DD；2026-11-02 新增）。
+# 用途：選到但買不到（買入過熱閘門擋下／下單失敗）時，那筆錢既不買股也不會去停泊 0050
+#       ⇒ 資金空轉。把「今天試過」也算建倉已處理，停泊才能接手（見 core.park_asset.is_build_attempted）。
+ENTRY_ATTEMPTS_PATH = "logs/entry_attempts.json"
+entry_attempts = load_json(ENTRY_ATTEMPTS_PATH, {})
 TOTAL_CAPITAL = float(os.getenv('TOTAL_CAPITAL', 500000))
 BROKER = os.getenv('BROKER', 'kgi')
 
@@ -262,6 +285,43 @@ def main():
     nonlocal lccd, pcap, holdings
     res = _check_capital_injections(TOTAL_CAPITAL, lccd, pcap, broker, rm, holdings, PORTFOLIO_CONFIG, save_holdings, send_telegram_message)
     (TOTAL_CAPITAL, lccd, pcap, holdings) = res
+
+  def mark_entry_attempt(symbol, day):
+    """記下「今天嘗試買過這檔但沒成交」——停泊 gate 會把它算成已建倉嘗試（失敗不影響交易）。"""
+    if entry_attempts.get(symbol) == day:
+      return
+    entry_attempts[symbol] = day
+    try:
+      save_json(entry_attempts, ENTRY_ATTEMPTS_PATH)
+    except Exception as e:
+      print(f'⚠️ 記錄買入嘗試失敗（不影響交易）: {e}')
+  def ensure_park_released_for_buy(reason):
+    """要下買單前先把停泊部位全部賣掉換現金（2026-11-02）。回傳釋出金額；0＝沒有停泊部位。
+
+    停泊 0050 的錢＝「還沒買到股票」的閒置資金；真正要買時它必須先變回現金，
+    否則會因為現金押在 0050 而整筆下單失敗。
+    """
+    try:
+      if (not _park_sym()) or int((_park_state().get('shares') or 0)) <= 0:
+        return 0.0
+      return float(park_release_all(reason) or 0.0)
+    except Exception as e:
+      print(f'⚠️ 停泊釋出失敗（不影響其他交易）：{e}')
+      return 0.0
+
+  def place_buy(symbol, qty, reason=''):
+    """**所有買單的唯一出口**（2026-11-02）：下單前確保停泊部位已換成現金。
+
+    為什麼要統一出口：買單有 4 條路徑（策略/auto 訊號、mock 路徑、資金加碼、買入補足），
+    原本只有「策略訊號」那條會先釋出停泊部位 ⇒ 補足／加碼會在現金仍押在 0050 時送單而失敗。
+    """
+    try:
+      if int(qty or 0) > 0:
+        ensure_park_released_for_buy(reason or f'要買 {symbol} 需要資金')
+    except Exception as e:
+      print(f'⚠️ 買前停泊釋出檢查失敗（照常送單）：{e}')
+    return broker.place_order(symbol, 'buy', qty)
+
   def ekwr(symbol, profit_amount):
     _execute_keep_wait_on_profit_roll(symbol, profit_amount, broker, rm, holdings, PORTFOLIO_CONFIG, save_holdings, send_telegram_message)
   budget_spent = load_monthly_budget()
@@ -382,7 +442,8 @@ def main():
       _now_ts = time.time()
       if (_now_ts - float(st.get('last_park_ts') or 0)) < 300:   # 5 分鐘內不重複下單
         return 0.0
-      if not _can(SELFSELECT_EXEC_MODE, list(PORTFOLIO_CONFIG), holdings, SELFSELECT_FILLED, sym):
+      if not _can(SELFSELECT_EXEC_MODE, list(PORTFOLIO_CONFIG), holdings, SELFSELECT_FILLED, sym,
+                 attempted=entry_attempts, today=datetime.now().strftime('%Y-%m-%d')):
         return 0.0
       idle = _idle(_park_leg_capital(), _park_stock_value(), _park_hold_value(st))
       px = broker.get_current_price(sym)
@@ -447,6 +508,7 @@ def main():
     daily_symbol_trades = {}
   _order_fail_notified = {}   # {symbol: 'YYYY-MM-DD'} 下單失敗 TG 警示去重
   _risk_notified = {}         # {symbol: 'YYYY-MM-DD'} 風險控管攔截 TG 警示去重（每日一次）
+  _overheat_notified = {}     # {symbol: 'YYYY-MM-DD'} 買入過熱被擋的 TG 去重（每日一次，2026-11-02）
   _unknown_notified = {}      # {symbol: 'YYYY-MM-DD'} 「下單結果未明」相關 TG 去重（每日一次，2026-10-19）
   _buy_fill_notified = {}     # {symbol: 'YYYY-MM-DD'} 買入未補足 TG 警示去重（每日一次）
   today_str_init = datetime.now().strftime('%Y-%m-%d')
@@ -493,7 +555,7 @@ def main():
           if (buy_shares <= 0):
             continue
           try:
-            broker.place_order(symbol, 'buy', buy_shares)
+            place_buy(symbol, buy_shares, '資金加碼需要資金')
             rm.log_trade(symbol, 1, px, buy_shares, exclude_from_daily=True)
             holdings[symbol] = (holdings.get(symbol, 0) + buy_shares)
             save_holdings(holdings)
@@ -679,15 +741,11 @@ def main():
       # 2026-10-31：要買新名單前，先把「停泊部位」全部賣掉換現金（只在名單尚未建倉時做一次）。
       #   ⚠️ 這裡刻意不在 `if` 條件裡直接寫 `_close_order_window`：test_close_order_window.py
       #   規定「窗口閘門必須出現在 portfolio_history 更新之後」——用變數承接可保住那條不變式。
-      _park_release_gate = bool(_close_order_window) and bool(_park_sym())
-      if _park_release_gate:
-        try:
-          _pending = any((holdings.get(_s, 0) or 0) <= 0 and _s not in SELFSELECT_FILLED
-                         for _s in PORTFOLIO_CONFIG if _s != _park_sym())
-          if _pending and int((_park_state().get('shares') or 0)) > 0:
-            park_release_all('新名單建倉需要資金')
-        except Exception as _pe:
-          print(f'⚠️ 停泊前置檢查失敗（不影響交易）：{_pe}')
+      # ── 停泊釋出（2026-11-02 改成「下單前才賣」）──────────────────────────
+      # 原本在窗口一開始就把停泊部位全部賣掉；若那一檔當天其實買不到（被過熱閘門擋、
+      # 下單失敗），就會變成「賣 0050 → 沒買到 → 當天再停泊回去」的每日來回 churn
+      # （0050 來回約 0.39%）。改成由 `place_buy()` 在下單前一刻才釋出：
+      # 沒有真的要買，就不會白白賣掉停泊部位；4 條買單路徑也都不會漏掉釋出。
       for (symbol, cfg) in PORTFOLIO_CONFIG.items():
         if (symbol not in portfolio_history):
           continue
@@ -903,6 +961,16 @@ def main():
             action = ('BUY' if (signal == 1) else 'SELL')
             if ((action == 'BUY') and (sn != 'keep_wait') and entry_overheat_reject(acd)):
               print(f'⏸️  {symbol} 買入過熱(RSI>{OH_RSI_TH:.0f}且距{OH_DIST_WIN}日高{OH_DIST_TH:.0f}%內)，跳過此訊號')
+              # 2026-11-02：被擋也要（1）記成「今天已嘗試」讓停泊 0050 能接手（2）發一次 TG
+              #   原本只印 log ⇒ 沒看 log 的人不會知道這檔沒買到，而錢也就一直閒置。
+              if (action == 'BUY'):
+                mark_entry_attempt(symbol, today_str)
+                if (_overheat_notified.get(symbol) != today_str):
+                  _overheat_notified[symbol] = today_str
+                  send_telegram_message(
+                    f'⏸️ *{symbol}* 買入被「過熱閘門」擋下\n'
+                    f'條件：RSI > {OH_RSI_TH:.0f} 且距 {OH_DIST_WIN} 日高 ≤ {OH_DIST_TH:.0f}%\n'
+                    f'⇒ 今天先不買；閒置資金改去停泊，下一個交易日的 13:25–13:30 會再試一次')
               signal = 0
               continue
             if (sn == 'keep_wait'):
@@ -1024,9 +1092,13 @@ def main():
                   print(f'🧾 {symbol} 先前逾時委託未成交（券商庫存 {_bq} 股）⇒ 清掉未明紀錄')
                 clear_unknown_order(symbol)
                 continue
+            # 2026-11-02：買單一律走 `place_buy()`（下單前才釋出停泊部位，賣出不動停泊）。
             if USE_REAL_API:
-              order_result = broker.place_order(symbol, action.lower(), position_size)
+              order_result = (place_buy(symbol, position_size) if (action == 'BUY')
+                              else broker.place_order(symbol, action.lower(), position_size))
               if ('error' in order_result):
+                if (action == 'BUY'):
+                  mark_entry_attempt(symbol, today_str)   # 買入失敗也視為「今天試過」⇒ 停泊可接手（2026-11-02）
                 _order_fail_notified = notify_order_failure(symbol, f'{order_result["error"]}', _order_fail_notified, today_str, send_telegram_message, action=('買入' if action == 'BUY' else '賣出'))
                 if (sn == 'keep_wait'):
                   trk['buy_count'] = kw_pre_state['buy_count']
@@ -1070,7 +1142,10 @@ def main():
                         f'（以實際送單股數記帳）')
                   position_size = _sent_qty
             else:
-              broker.place_order(symbol, action, position_size)
+              if (action == 'BUY'):
+                place_buy(symbol, position_size)
+              else:
+                broker.place_order(symbol, action, position_size)
             rm.log_trade(symbol, signal, px, position_size, exclude_from_daily=False)
             if (action == 'BUY'):
               holdings[symbol] = (holdings.get(symbol, 0) + position_size)
@@ -1209,7 +1284,7 @@ def main():
                   # 主動補足到目標（不看訊號）
                   try:
                     if USE_REAL_API:
-                      _order_ret = broker.place_order(symbol, 'buy', _need)
+                      _order_ret = place_buy(symbol, _need, '買入補足需要資金')
                       _filled = resolve_fill(broker, symbol, 'buy', _order_ret, _need)
                       if _filled is not None and _filled <= 0:
                         _order_fail_notified = notify_order_failure(
@@ -1219,7 +1294,7 @@ def main():
                       else:
                         _filled = _filled if _filled is not None else _need
                     else:
-                      broker.place_order(symbol, 'buy', _need)
+                      place_buy(symbol, _need, '買入補足需要資金')
                       _filled = _need
                     if _filled > 0:
                       holdings[symbol] = held + _filled

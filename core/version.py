@@ -17,6 +17,25 @@
   依使用者裁定「**非程式本身的變更不要動版號**」**撤回**，程式版本回到 `1.1.3`。
   教材／文件／`.env`／cache／報告 JSON 的變更一律不升版號；只有 `core/`、`scripts/`、`strategies/`、`data/`、`utils/`、
   `selfselect_trader.py` 這類執行期程式的修改才 +1。
+- `1.1.18`（2026-11-02）**所有買單統一走 `place_buy()`**（補上 top-up／資金加碼漏釋出停泊的缺口）：
+  v1.1.17 只讓「策略訊號」那條買單先賣掉停泊部位；`mock` 路徑、資金加碼（`capital.txt`）、
+  買入補足（`BUY_AMOUNT_OFFSET`）三條仍會「現金還押在 0050 就送單」⇒ 整筆失敗。
+  現在 4 條路徑都經 `place_buy()`（先 `ensure_park_released_for_buy()` 再下單）；
+  直接呼叫 `broker.place_order(...,'buy',...)` 只准出現在 `place_buy()` 與 `park_idle_if_due()`（買 0050＝停泊本身）。
+  回歸測試新增 `test/test_place_buy_single_exit.py`（AST 掃描：3 支）。
+- `1.1.17`（2026-11-02）**「選到但買不到」不再讓資金空轉**（停泊缺口）：
+  買入被「過熱閘門」擋下或下單失敗時，那筆錢既不買股也不會去停泊 0050（`can_park_after_build`
+  原本只認『已持有／已買過』）⇒ 資金閒置。改法：① 新增 `logs/entry_attempts.json`（`{代號: 日期}`），
+  把『今天嘗試買但沒成交』記下來，`core.park_asset.is_build_attempted()` 只認**當天**的紀錄 ⇒ 停泊可接手；
+  ② 被過熱閘門擋下時發**一次 Telegram**（每日每檔）——原本只印 log，沒看 log 的人不會知道沒買到；
+  ③ 停泊釋出改成**下單前一刻才賣**（原本窗口一開始就全賣）：否則天天『賣 0050→沒買到→再停泊』
+  會產生約 0.39%／次 的來回 churn。測試：`test/test_park_asset.py` 23 支（新增 4 支）。
+- `1.1.16`（2026-11-02）**報價（`intraday/quote`）獨立的較短逾時＋逾時重試一次**：
+  2026-11-02 09:00 開盤首圈實測 `api.fugle.tw` 第一筆報價 **30 秒無回應**（Read timed out）才被
+  全域 `NET_TIMEOUT_SEC=30` 切掉。13:25–13:30 下單窗口是**逐檔串行**取價 ⇒ 一檔卡 30 秒等於吃掉窗口 1/10。
+  改法：`selfselect_trader.request_timeout_for(url)` 依 URL 選逾時（新增 `NET_QUOTE_TIMEOUT_SEC`，預設 8 秒；
+  其他呼叫仍 30 秒，且在呼叫當下讀 env ⇒ 熱重載立即生效），`EsunProvider.get_current_price` 對
+  **逾時／連線錯誤**重試一次（其他錯誤不重試）。最壞一檔 8+8=16 秒，不會讓 `place_order` 外層多等。
 - `1.1.15`（2026-10-31）**閒置資金停泊改為預設開啟、停泊 `0050`**（使用者裁定）：
   `.env` 不寫 `SELFSELECT_PARK_ASSET` ⇒ 停泊 0050；明確留空（`SELFSELECT_PARK_ASSET=`）⇒ 不停泊；填代號 ⇒ 停泊該檔。
   `core/park_asset.py::park_symbol()` 的語義由「未設定＝關閉」改為「未設定＝0050」，`enabled()` 同步；
@@ -95,7 +114,7 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 
-APP_VERSION = "1.1.15"
+APP_VERSION = "1.1.18"
 
 # ── 建置標記 ─────────────────────────────────────────────────────────────
 # ⚠️ 這裡**不是**「程式啟動時間」。原本 banner 用 `datetime.now()` 當 BUILD_DATE，

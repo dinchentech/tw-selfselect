@@ -20,8 +20,8 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from core.park_asset import (DEFAULT_SYMBOL, MIN_PARK_NTD, can_park_after_build,  # noqa: E402
-                             enabled, idle_amount, load_state, park_shares, park_symbol,
-                             release_shares, save_state)
+                             enabled, idle_amount, is_build_attempted, load_state,
+                             park_shares, park_symbol, release_shares, save_state)
 
 
 class TestSymbolAndEnabled(unittest.TestCase):
@@ -115,6 +115,31 @@ class TestCanParkAfterBuild(unittest.TestCase):
 
     def test_empty_watchlist(self):
         self.assertFalse(can_park_after_build("immediate", [], {}, {}, "0050"))
+
+    # ── 2026-11-02：選到但買不到（過熱閘門擋／下單失敗）也算建倉已處理 ──
+    def test_attempted_today_counts_as_settled(self):
+        """昨天之前沒成交的買單，讓停泊可以接手（否則那筆錢既不買股也不停泊）。"""
+        self.assertTrue(can_park_after_build("immediate", ["2330", "2317"], {"2330": 100}, {},
+                                            "0050", attempted={"2317": "2026-11-02"},
+                                            today="2026-11-02"))
+
+    def test_attempted_yesterday_does_not_count(self):
+        """只認當天：隔天要再試一次買進，不能拿舊紀錄擋掉。"""
+        self.assertFalse(can_park_after_build("immediate", ["2330", "2317"], {"2330": 100}, {},
+                                             "0050", attempted={"2317": "2026-11-01"},
+                                             today="2026-11-02"))
+
+    def test_attempted_without_today_is_ignored(self):
+        """沒給 today ⇒ 視為舊行為（attempted 一律不算），避免呼叫端忘記傳日期就默默放行。"""
+        self.assertFalse(can_park_after_build("immediate", ["2330"], {}, {}, "0050",
+                                             attempted={"2330": "2026-11-02"}))
+
+    def test_is_build_attempted_rules(self):
+        self.assertTrue(is_build_attempted("2330", {"2330": 1}, {}, {}, "2026-11-02"))
+        self.assertTrue(is_build_attempted("2330", {}, {"2330": "2026-10-01"}, {}, "2026-11-02"))
+        self.assertTrue(is_build_attempted("2330", {}, {}, {"2330": "2026-11-02"}, "2026-11-02"))
+        self.assertFalse(is_build_attempted("2330", {}, {}, {"2330": "2026-11-01"}, "2026-11-02"))
+        self.assertFalse(is_build_attempted("2330", {}, {}, {}, "2026-11-02"))
 
 
 class TestStateIO(unittest.TestCase):

@@ -26,7 +26,8 @@
 
 ## 純函式（`test/test_park_asset.py` 釘住）
 
-`park_symbol()`／`idle_amount()`／`park_shares()`／`release_shares()`／`can_park_after_build()`／`enabled()`
+`park_symbol()`／`idle_amount()`／`park_shares()`／`release_shares()`／`can_park_after_build()`／
+`is_build_attempted()`（2026-11-02 新增：今天嘗試買過但沒成交也算建倉已處理）／`enabled()`
 """
 from __future__ import annotations
 
@@ -90,18 +91,37 @@ def release_shares(need_cash: float, price: float, held_shares: int) -> int:
     return max(0, min(held, need))
 
 
+def is_build_attempted(symbol: str, holdings: dict, filled: dict,
+                       attempted: dict, today: str) -> bool:
+    """這一檔是否「本月建倉已處理」：已持有、已買過、**或今天嘗試買過但沒成交**。
+
+    `attempted`（`logs/entry_attempts.json`，`{代號: 'YYYY-MM-DD'}`）是 2026-11-02 新增的：
+    選到但買不到（買入過熱閘門擋下、下單失敗）時，那筆錢既沒買到股票、也不會去停泊 0050
+    ⇒ 資金就一直閒置。把「今天試過」也算完成，停泊才能接手；真的買到時會先賣掉停泊部位。
+    只認**當天**的紀錄：昨天的嘗試不算，隔天照樣會再試一次。
+    """
+    if (holdings.get(symbol, 0) or 0) > 0:
+        return True
+    if symbol in (filled or {}):
+        return True
+    return bool(today) and str((attempted or {}).get(symbol) or "") == str(today)
+
+
 def can_park_after_build(exec_mode: str, watch_symbols, holdings: dict,
-                         filled: dict, park_sym: str) -> bool:
-    """名單是否「已建倉完成」：每一檔（排除停泊標的）都已持有或今天已嘗試買進。
+                         filled: dict, park_sym: str,
+                         attempted: dict | None = None, today: str | None = None) -> bool:
+    """名單是否「已建倉完成」：每一檔（排除停泊標的）都已持有、已買過或今天已嘗試買進。
 
     `exec_mode` 必須是 `immediate`（`signal` 模式要把資金留給還沒出現的訊號）。
+    `attempted`／`today` 見 `is_build_attempted()`；省略時行為與舊版完全相同。
     """
     if (exec_mode or "").strip().lower() != "immediate":
         return False
     syms = [s for s in (watch_symbols or []) if s and s != park_sym]
     if not syms:
         return False
-    return all((holdings.get(s, 0) or 0) > 0 or s in (filled or {}) for s in syms)
+    day = str(today or "")
+    return all(is_build_attempted(s, holdings, filled, attempted or {}, day) for s in syms)
 
 
 def load_state(path: str | Path = STATE_PATH) -> dict:
