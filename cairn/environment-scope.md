@@ -5,7 +5,7 @@ summary: "模擬／真錢環境隔離、切 real 前的六項檢查清單、玉�
 tags: [環境, 玉山, 實盤, 對帳, 事故]
 contains: [experience, procedure, lesson, open_question]
 created: "2026-10-26"
-updated: "2026-10-26"
+updated: "2026-11-02"
 related: [total-assets-reconciliation.md]
 authoring_mode: ai_generated
 ---
@@ -64,6 +64,15 @@ authoring_mode: ai_generated
 - **「送出 2000 股」不等於「成交 2000 股」**：整股進位／捨去是券商端行為，帳本只能信回報值。
 - **容器環境變數有時間差**：`docker exec` 進去的工具與主程式看到的 `.env` 可能不是同一份。
 - **同一個回傳欄位可能有兩種單位**：混用會讓對帳永遠對不平，且症狀看起來像「券商資料錯」。
+- **報價逾時是「時間預算」問題，不是錯誤處理問題**（2026-11-02）：玉山行情（`api.fugle.tw`）的請求在
+  SDK 內是 `requests.get` **不帶 timeout**，全靠主程式 monkey patch 的 `NET_TIMEOUT_SEC=30` 兜住。
+  13:25–13:30 的下單窗口內取價是**逐檔串行**，一檔卡滿 30 秒就吃掉窗口 1/10（5 檔全卡 = 150 秒）。
+  實測：2026-11-02 09:00 開盤首圈第一筆報價 30 秒無回應（連線建立後才 Read timed out ⇒ 供應商開盤尖峰，
+  同時段對同端點量測只要 0.1–0.2 秒）。⇒ 報價改走**專屬上限** `NET_QUOTE_TIMEOUT_SEC`（預設 8 秒，
+  在呼叫當下讀 env 故熱重載立即生效）＋`get_current_price` 對**逾時／連線錯誤**重試一次（最壞 16 秒）。
+  旋鈕在 `selfselect_trader.request_timeout_for()`；測試在 `test/test_close_window_timeout.py`
+  （`QuoteTimeoutBudgetTest`／`QuoteRetryTest`）。副作用判斷：該次逾時**無實質損失**
+  （`get_current_price` 回 0、盤中合成 K 有 `px > 0` 守門 ⇒ 只是那一分鐘不更新），帳務與訊號未受影響。
 
 ## 開放問題
 
