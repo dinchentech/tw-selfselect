@@ -17,6 +17,14 @@
   依使用者裁定「**非程式本身的變更不要動版號**」**撤回**，程式版本回到 `1.1.3`。
   教材／文件／`.env`／cache／報告 JSON 的變更一律不升版號；只有 `core/`、`scripts/`、`strategies/`、`data/`、`utils/`、
   `selfselect_trader.py` 這類執行期程式的修改才 +1。
+- `1.1.19`（2026-11-03）**所有記帳路徑改用「實際送單價」**（對帳缺口）：
+  `place_order()` 送單前會自己再取一次現價當限價，所以「上層的報價」與「券商收到的價」可能不同
+  （2026-11-03 實測：孤兒清倉 6505 上層取到 99.9、實際送單 **99.60** ⇒ 帳本多記約 NT$600，
+  `reconcile_broker_books.py` 會報「CSV 價 ≠ 券商價」）。策略訊號那條 2026-10-19 已改用
+  `order_fill_price(order_result, px)`；這次把其餘記帳路徑接上：`sell_with_fill_check()` 多回傳
+  `order_ret`（孤兒清倉用它取 `sent_price`）、`keep_wait` 加碼／買入補足／停泊釋出／停泊買進
+  都經 `selfselect_trader.book_price(order_ret, 舊價, 標記)`（價格有變印 `📌`）。
+  顯示同步改為兩位小數（原本 `:.0f` 會把 99.9 印成 100）。測試：`test/test_order_unknown_recovery.py` 補 4 支。
 - `1.1.18`（2026-11-02）**所有買單統一走 `place_buy()`**（補上 top-up／資金加碼漏釋出停泊的缺口）：
   v1.1.17 只讓「策略訊號」那條買單先賣掉停泊部位；`mock` 路徑、資金加碼（`capital.txt`）、
   買入補足（`BUY_AMOUNT_OFFSET`）三條仍會「現金還押在 0050 就送單」⇒ 整筆失敗。
@@ -114,7 +122,7 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 
-APP_VERSION = "1.1.18"
+APP_VERSION = "1.1.19"
 
 # ── 建置標記 ─────────────────────────────────────────────────────────────
 # ⚠️ 這裡**不是**「程式啟動時間」。原本 banner 用 `datetime.now()` 當 BUILD_DATE，

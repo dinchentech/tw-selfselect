@@ -21,7 +21,8 @@ import unittest
 from pathlib import Path
 
 from core.live_utils import (broker_holding_qty, clear_unknown_order, load_unknown_orders,
-                             order_fill_price, record_unknown_order, unknown_order_blocks_buy)
+                             order_fill_price, record_unknown_order, sell_with_fill_check,
+                             unknown_order_blocks_buy)
 
 
 class OrderFillPriceTest(unittest.TestCase):
@@ -69,6 +70,50 @@ class BrokerHoldingQtyTest(unittest.TestCase):
         self.assertIsNone(broker_holding_qty(object(), '8046'))   # 沒有 query_inventories
 
 
+class _FakeSellBroker:
+    """賣單用：`place_order` 回傳 provider 的 `sent_price`（實際送單價）。"""
+
+    def __init__(self, ret, fill=None):
+        self._ret = ret
+        self._fill = fill
+
+    def place_order(self, symbol, action, quantity):
+        return self._ret
+
+    def check_fill(self, symbol, action, order_ret, requested):
+        return self._fill
+
+
+class SellWithFillCheckTest(unittest.TestCase):
+    """`sell_with_fill_check()` 要把 provider 的下單回傳帶回去（2026-11-03）。
+
+    孤兒清倉用它取 `sent_price` 記帳；不回傳就只能用「上層送單前取到的舊報價」
+    （6505 實測：上層 99.9、實際送單 99.60）。
+    """
+
+    def test_returns_order_ret_with_sent_price(self):
+        ret = {'sent_price': 99.6, 'status': 'filled'}
+        filled, _notified, order_ret = sell_with_fill_check(
+            _FakeSellBroker(ret), '6505', 2000, {}, '2026-11-03', None, '清倉')
+        self.assertEqual(filled, 2000)
+        self.assertIs(order_ret, ret)
+        self.assertAlmostEqual(order_fill_price(order_ret, 99.9), 99.6)
+
+    def test_partial_fill_still_returns_order_ret(self):
+        ret = {'sent_price': 72.0}
+        filled, _notified, order_ret = sell_with_fill_check(
+            _FakeSellBroker(ret, fill=500), '1301', 2000, {}, '2026-11-03', None, '清倉')
+        self.assertEqual(filled, 500)
+        self.assertIs(order_ret, ret)
+
+    def test_unfilled_returns_zero_and_order_ret(self):
+        ret = {'error': 'boom'}
+        filled, _notified, order_ret = sell_with_fill_check(
+            _FakeSellBroker(ret), '6505', 2000, {}, '2026-11-03', None, '清倉')
+        self.assertEqual(filled, 0)
+        self.assertIs(order_ret, ret)
+
+
 class UnknownOrderStateTest(unittest.TestCase):
     """B：逾時（結果未明）狀態的落地與判讀。"""
 
@@ -114,6 +159,7 @@ class WiringTest(unittest.TestCase):
         self.root = Path(__file__).resolve().parent.parent
         self.main = (self.root / 'selfselect_trader.py').read_text(encoding='utf-8')
         self.provider = (self.root / 'data' / 'esun_provider.py').read_text(encoding='utf-8')
+        self.live_utils = (self.root / 'core' / 'live_utils.py').read_text(encoding='utf-8')
 
     def test_provider_reports_sent_price_and_unknown_timeout(self):
         self.assertIn('result_holder["sent_price"]', self.provider)
@@ -125,6 +171,18 @@ class WiringTest(unittest.TestCase):
         self.assertIn('unknown_order_blocks_buy(symbol, _unk, today_str)', self.main)
         self.assertIn('broker_holding_qty(broker, symbol)', self.main)
         self.assertIn('clear_unknown_order(symbol)', self.main)
+
+    def test_all_bookkeeping_paths_use_sent_price(self):
+        """2026-11-03：孤兒清倉／加碼／補足／停泊 都用實際送單價記帳（不只策略訊號那條）。"""
+        self.assertIn('return shares, notified, order_ret', self.live_utils,
+                      'sell_with_fill_check() 要回傳 order_ret（孤兒清倉靠它取 sent_price）')
+        self.assertIn('def book_price(', self.main)
+        for call in ('sell_with_fill_check(', 'place_buy(symbol, buy_shares',
+                     "place_buy(symbol, _need", "broker.place_order(sym, 'sell', sh)"):
+            self.assertIn(call, self.main)
+        for site in ('book_price(_order_ret, old_px', 'book_price(_kw_ret, px',
+                     'book_price(_order_ret, px', 'book_price(ret, px'):
+            self.assertIn(site, self.main, f'缺少記帳價修正：{site}')
 
 
 

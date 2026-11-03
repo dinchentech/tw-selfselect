@@ -82,6 +82,27 @@ def start_watchdog():
         os._exit(1)
   threading.Thread(target=_wd, daemon=True).start()
   print(f'🐕 watchdog 已啟動（> {_STALL_EXIT_SEC:.0f}s 無進展則重啟）')
+
+
+def book_price(order_ret, decision_px, label=''):
+  """記帳價＝provider 回報的**實際送單價**（`sent_price`）；沒有就沿用作業價。
+
+  為什麼要有這個 helper（2026-11-03）：`place_order()` 內送單前會**自己再取一次現價**當限價，
+  所以「上層先取到的報價」與「券商實際收到的價」可能不同（實測 6505 孤兒清倉：
+  上層取到 99.9、實際送單 99.60 ⇒ 帳本多記約 NT$600，對帳每天報「CSV 價 ≠ 券商價」）。
+  策略訊號那條 2026-10-19 就改用 `order_fill_price()`；本 helper 讓其餘記帳路徑共用同一條規則。
+  價格有變時印一行 📌，方便事後從 log 追。
+  """
+  try:
+    _p = float(order_fill_price(order_ret, decision_px))
+  except Exception:
+    return decision_px
+  if _p > 0 and abs(_p - float(decision_px)) >= 0.005:
+    print(f'📌 {label} 記帳價改用實際送單價 {float(decision_px):.2f} → {_p:.2f}')
+    return _p
+  return decision_px
+
+
 def keep_wait_tier_hit(tiers, fired, px, profit_pct):
   """keep_wait 分層停利：回傳 (index, tier) 或 None。
 
@@ -416,6 +437,7 @@ def main():
       ret = broker.place_order(sym, 'sell', sh)
       filled = resolve_fill(broker, sym, 'sell', ret, sh)
       done = int(filled or 0)
+      px = book_price(ret, px, f'停泊釋出 {sym}')   # 2026-11-03：記帳價用實際送單價
       got = done * float(px)
       left = max(0, sh - done)
       _ss({'symbol': sym, 'shares': left, 'cost': (0.0 if left == 0 else float(st.get('cost') or 0.0)),
@@ -455,6 +477,7 @@ def main():
       done = int(filled or 0)
       if done <= 0:
         return 0.0
+      px = book_price(ret, px, f'停泊 {sym}')   # 2026-11-03：記帳價用實際送單價
       cost = done * float(px)
       _ss({'symbol': sym, 'shares': int(st.get('shares') or 0) + done,
            'cost': float(st.get('cost') or 0.0) + cost,
@@ -555,12 +578,13 @@ def main():
           if (buy_shares <= 0):
             continue
           try:
-            place_buy(symbol, buy_shares, '資金加碼需要資金')
+            _kw_ret = place_buy(symbol, buy_shares, '資金加碼需要資金')
+            px = book_price(_kw_ret, px, f'{symbol} 加碼')   # 2026-11-03：記帳價用實際送單價
             rm.log_trade(symbol, 1, px, buy_shares, exclude_from_daily=True)
             holdings[symbol] = (holdings.get(symbol, 0) + buy_shares)
             save_holdings(holdings)
-            print(f'📥 {symbol} keep_wait 加碼 {buy_shares} 股 @ {px:.0f}')
-            send_telegram_message(f'📥 *{symbol}* keep_wait 加碼 {buy_shares} 股 @ {px:.0f}')
+            print(f'📥 {symbol} keep_wait 加碼 {buy_shares} 股 @ {px:.2f}')
+            send_telegram_message(f'📥 *{symbol}* keep_wait 加碼 {buy_shares} 股 @ {px:.2f}')
           except Exception as e:
             print(f'❌ {symbol} keep_wait 加碼失敗: {e}')
     save_processed_capital(pcap)
@@ -712,13 +736,15 @@ def main():
           old_px = broker.get_current_price(old_sym)
           if old_px <= 0:
             continue
-          _filled, _order_fail_notified = sell_with_fill_check(broker, old_sym, old_shares, _order_fail_notified, today_str, send_telegram_message, '清倉')
+          _filled, _order_fail_notified, _order_ret = sell_with_fill_check(broker, old_sym, old_shares, _order_fail_notified, today_str, send_telegram_message, '清倉')
           if _filled <= 0:
             continue
           old_shares = _filled
+          # 2026-11-03：記帳價改用 provider 回報的實際送單價（6505 實測：上方報價 99.9、實際送單 99.60）
+          old_px = book_price(_order_ret, old_px, f'{old_sym} 清倉')
           rm.log_trade(old_sym, -1, old_px, old_shares, exclude_from_daily=True)
           send_trade_alert(old_sym, 'SELL', old_px, old_shares, 'CLEANUP')
-          print(f'🧹 清倉 {old_sym} {old_shares} 股 @ {old_px:.0f}（不再在 PORTFOLIO_CONFIG 中）')
+          print(f'🧹 清倉 {old_sym} {old_shares} 股 @ {old_px:.2f}（不再在 PORTFOLIO_CONFIG 中）')
           _remaining = holdings.get(old_sym, 0) - old_shares
           if _remaining > 0:
             holdings[old_sym] = _remaining
@@ -1294,9 +1320,11 @@ def main():
                       else:
                         _filled = _filled if _filled is not None else _need
                     else:
-                      place_buy(symbol, _need, '買入補足需要資金')
+                      _order_ret = place_buy(symbol, _need, '買入補足需要資金')
                       _filled = _need
                     if _filled > 0:
+                      # 2026-11-03：記帳價改用 provider 回報的實際送單價（同孤兒清倉／策略訊號）
+                      px = book_price(_order_ret, px, f'{symbol} 補足')
                       holdings[symbol] = held + _filled
                       save_holdings(holdings)
                       rm.log_trade(symbol, 1, px, _filled, exclude_from_daily=True)
@@ -1304,7 +1332,7 @@ def main():
                       from core.live_utils import add_stock_allocation as _add_alloc
                       _add_alloc(stock_alloc, symbol, px * _filled, _filled)
                       save_stock_allocation(stock_alloc)
-                      print(f'📥 {symbol} 買入補足 {_filled} 股 @ {px:.0f}（{held}→{held+_filled}，目標 {_target}）')
+                      print(f'📥 {symbol} 買入補足 {_filled} 股 @ {px:.2f}（{held}→{held+_filled}，目標 {_target}）')
                   except Exception as _e:
                     print(f'⚠️ {symbol} 買入補足失敗: {_e}')
                     _order_fail_notified = notify_order_failure(

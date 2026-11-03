@@ -299,18 +299,24 @@ def skip_if_overlap_held(symbol, holdings, notify_fn=None, label="策略"):
 
 
 def sell_with_fill_check(broker, symbol, shares, notified, today_str, notify_fn, action_label):
-    """賣出 + 成交確認。回傳 (實際賣出股數, 更新後 notified)。
-    未成交 → 警示且回傳 0；部分成交 → 回傳實際數；無法確認 → 視為全成交。"""
+    """賣出 + 成交確認。回傳 (實際賣出股數, 更新後 notified, 下單回傳值)。
+
+    ⚠️ 第 3 個值（`order_ret`）是 2026-11-03 加的：provider 會在**送單前重新取現價**當限價，
+    並把該價放在 `sent_price`；孤兒清倉要拿它記帳，否則會用「上層送單前取到的舊報價」
+    （實測 6505：上層取到 99.9、實際送單 99.60，帳本多記約 NT$600）。
+    記帳價請走 `order_fill_price(order_ret, 舊價)`。
+    未成交 → 警示且回傳 0；部分成交 → 回傳實際數；無法確認 → 視為全成交。
+    """
     order_ret = broker.place_order(symbol, "sell", shares)
     filled = resolve_fill(broker, symbol, "sell", order_ret, shares)
     if filled is not None and filled <= 0:
         notified = notify_order_failure(symbol, "委託未成交（排隊中）", notified, today_str,
                                         notify_fn, action=action_label)
-        return 0, notified
+        return 0, notified, order_ret
     if filled is not None and filled < shares:
         print(f"⚠️ {symbol} {action_label}部分成交 {filled}/{shares} 股，餘額續留")
-        return filled, notified
-    return shares, notified
+        return filled, notified, order_ret
+    return shares, notified, order_ret
 
 
 
