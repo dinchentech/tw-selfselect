@@ -278,13 +278,26 @@ let rafId = null;
 //  Price Data Generation
 // ═══════════════════════════════════════════════════════════════
 
+// 固定種子 PRNG：同一條價格走勢每次載入都一樣（原本用 Math.random，每次重整都不同，
+// 導致買點/賣點位置亂跳、甚至出現「先賣後買」——2026-11-04 修正）
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const PRICE_SEED = 476100; // 種子 476100 ⇒ BUY(i=59，回檔段低點、RSI 1)、SELL(i=88，本波最高點、RSI 89)；先買後賣，且舊的「只判通道」邏輯在同一個種子下會畫成先賣(i=22)後買(i=59)
+
 function generatePriceData(n) {
   const prices = [];
   let p = 100;
   const trend = 0.02; // slight upward bias
+  const rnd = mulberry32(PRICE_SEED);
   for (let i = 0; i < n; i++) {
-    const drift = trend + (Math.random() - 0.48) * 0.4;
-    const noise = (Math.random() - 0.5) * 0.8;
+    const drift = trend + (rnd() - 0.48) * 0.4;
+    const noise = (rnd() - 0.5) * 0.8;
     // Add a big dip around 40% and a big rise around 65%
     const t = i / n;
     let shape = 0;
@@ -354,9 +367,22 @@ const pad = (priceMax - priceMin) * 0.15;
 priceMin -= pad;
 priceMax += pad;
 
-// Pre-compute buy/sell indices (use yesterday's band to avoid self-inclusion)
-const BUY_IDX = (() => { for (let i = 21; i < N; i++) if (LOWER[i-1] !== null && PRICE_DATA[i] < LOWER[i-1]) return i; return -1; })();
-const SELL_IDX = (() => { for (let i = 21; i < N; i++) if (UPPER[i-1] !== null && PRICE_DATA[i] > UPPER[i-1]) return i; return -1; })();
+// Pre-compute buy/sell indices
+//   條件與畫面上的 condition-chip 一致：跌破下軌（用昨日軌道）＋ RSI5 < 30；
+//   突破上軌 ＋ RSI5 > 70（原本只判斷通道、沒判斷 RSI ⇒ 可能標在 RSI 50 的位置）。
+//   時序也要求「先買後賣」：均值回歸是先跌破買進、後超漲賣出，時序反了就是畫錯。
+const SIGNALS = (() => {
+  const buys = [], sells = [];
+  for (let i = 21; i < N; i++) {
+    if (LOWER[i-1] !== null && PRICE_DATA[i] < LOWER[i-1] && RSI5[i] !== null && RSI5[i] < 30) buys.push(i);
+    if (UPPER[i-1] !== null && PRICE_DATA[i] > UPPER[i-1] && RSI5[i] !== null && RSI5[i] > 70) sells.push(i);
+  }
+  const buy = buys.length ? buys[0] : -1;
+  const sell = buy >= 0 ? (sells.find((i) => i > buy) ?? -1) : (sells.length ? sells[0] : -1);
+  return { buy, sell, buys, sells };
+})();
+const BUY_IDX = SIGNALS.buy;
+const SELL_IDX = SIGNALS.sell;
 
 function p2y(p) { return 600 - ((p - priceMin) / (priceMax - priceMin)) * 520 - 40; }
 function x(i) { return 40 + (i / (N - 1)) * 920; }
