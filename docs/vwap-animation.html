@@ -243,8 +243,8 @@ function mulberry32(a) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-// 預設種子 6：實測 BUY i=44（下偏離、RSI 0）、SELL i=91（上偏離、RSI 100）
-const PRICE_SEED = (typeof window !== 'undefined' && window.__SEED) ? window.__SEED : 6;
+// 預設種子 18288：實測 BUY i=44（低點 i=52 前 8 根、只高 0.86%）、SELL i=96（山頂 i=99 前 3 根、是山頂的 99.8%）
+const PRICE_SEED = (typeof window !== 'undefined' && window.__SEED) ? window.__SEED : 18288;
 
 function generatePriceData(n) {
   const prices = [];
