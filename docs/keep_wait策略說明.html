@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keep &amp; Wait DCA 低接策略 — 分頁說明</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", sans-serif;
+    background: #0d0f15;
+    color: #e8eaed;
+    overflow: hidden;
+    height: 100vh;
+  }
+
+  /* ─── slides container ─── */
+  .slides {
+    display: flex;
+    transition: transform .6s cubic-bezier(.22,1,.36,1);
+    height: 100vh;
+  }
+  .slide {
+    min-width: 100vw;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 72px 56px;
+    position: relative;
+    overflow-y: auto;
+  }
+
+  /* ─── nav ─── */
+  .nav {
+    position: fixed; bottom: 44px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 28px;
+    background: rgba(13,15,21,.88); backdrop-filter: blur(12px);
+    padding: 16px 36px; border-radius: 100px;
+    border: 1px solid rgba(255,255,255,.08); z-index: 100;
+    box-shadow: 0 8px 32px rgba(0,0,0,.5);
+  }
+  .nav button {
+    background: none; border: none; color: #e8eaed; font-size: 1.6rem;
+    cursor: pointer; width: 44px; height: 44px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .2s;
+  }
+  .nav button:hover { background: rgba(255,255,255,.1); }
+  .nav button:disabled { opacity: .2; cursor: default; }
+  .nav .dots { display: flex; gap: 10px; }
+  .nav .dots .dot {
+    width: 12px; height: 12px; border-radius: 50%;
+    background: rgba(255,255,255,.15); cursor: pointer; transition: all .3s;
+  }
+  .nav .dots .dot.active { background: #e8eaed; box-shadow: 0 0 12px rgba(232,234,237,.3); }
+  .nav .label { font-size: .95rem; color: rgba(255,255,255,.35); min-width: 60px; text-align: center; }
+
+  /* ─── progress ─── */
+  .top-bar { position: fixed; top: 0; left: 0; right: 0; height: 5px; background: rgba(255,255,255,.06); z-index: 100; }
+  .top-bar .fill { height: 100%; width: 0%; background: linear-gradient(90deg, #2980b9, #27ae60); transition: width .4s; }
+
+  /* ─── page hero ─── */
+  .page-hero { text-align: center; }
+  .page-hero .badge {
+    display: inline-block; font-size: .95rem; font-weight: 600; letter-spacing: 1px;
+    text-transform: uppercase; padding: 6px 18px; border-radius: 100px;
+    background: rgba(41,128,185,.15); color: #2980b9;
+    margin-bottom: 24px;
+  }
+  .page-hero h1 { font-size: 2.6rem; font-weight: 700; letter-spacing: -.3px; margin-bottom: 12px; }
+  .page-hero p { color: rgba(255,255,255,.4); font-size: 1.25rem; margin-bottom: 40px; }
+  .page-hero .quote-line {
+    font-size: 1.3rem; color: rgba(255,255,255,.3); font-style: italic;
+    padding: 24px 40px; border: 1px solid rgba(255,255,255,.06);
+    border-radius: 16px; background: rgba(255,255,255,.02);
+    display: inline-block;
+  }
+  .page-hero .quote-line span {
+    display: inline-block; margin: 0 6px;
+    padding: 6px 14px; border-radius: 8px;
+  }
+  .page-hero .quote-line .s0 { background: rgba(41,128,185,.12); color: #5dade2; }
+  .page-hero .quote-line .s1 { background: rgba(192,57,43,.12); color: #ec7063; }
+  .page-hero .quote-line .s2 { background: rgba(39,174,96,.12); color: #58d68d; }
+  .page-hero .quote-line .s3 { background: rgba(243,156,18,.12); color: #f4d03f; }
+
+  .arrow-hint { margin-top: 48px; color: rgba(255,255,255,.15); font-size: 1.1rem; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:.15} 50%{opacity:.5} }
+
+  /* ─── step page ─── */
+  .step-page { max-width: 800px; width: 100%; text-align: center; }
+  .step-page .icon-big { font-size: 4.2rem; margin-bottom: 24px; }
+  .step-page .step-num {
+    font-size: .9rem; color: rgba(255,255,255,.2); letter-spacing: 2px;
+    text-transform: uppercase; margin-bottom: 10px;
+  }
+  .step-page h2 { font-size: 2.2rem; font-weight: 700; margin-bottom: 20px; }
+  .step-page .desc {
+    font-size: 1.25rem; color: rgba(255,255,255,.5); line-height: 1.7;
+    margin-bottom: 28px;
+  }
+  .step-page .desc strong { color: rgba(255,255,255,.75); }
+
+  .step-page .detail-card {
+    background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.06);
+    border-radius: 16px; padding: 28px 32px; text-align: left;
+    margin-top: 16px;
+  }
+  .step-page .detail-card dt {
+    font-size: .85rem; color: rgba(255,255,255,.25); letter-spacing: 1px;
+    text-transform: uppercase; margin-bottom: 14px;
+  }
+  .step-page .detail-card dd {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px 28px;
+  }
+  .step-page .detail-card dd .item {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,.04);
+    font-size: .95rem;
+  }
+  .step-page .detail-card dd .item .key { color: rgba(255,255,255,.6); }
+  .step-page .detail-card dd .item .val { color: rgba(255,255,255,.8); font-weight: 600; }
+
+  /* ─── all-params page ─── */
+  .all-params { max-width: 800px; width: 100%; text-align: center; }
+  .all-params h2 { font-size: 2rem; font-weight: 700; margin-bottom: 28px; }
+  .all-params table {
+    width: 100%; border-collapse: collapse; font-size: 1.1rem; margin-bottom: 28px;
+  }
+  .all-params td {
+    padding: 12px 20px; border-bottom: 1px solid rgba(255,255,255,.04);
+    color: rgba(255,255,255,.5);
+  }
+  .all-params td:first-child { color: rgba(255,255,255,.7); font-weight: 500; width: 55%; text-align: left; }
+  .all-params td:last-child { text-align: right; color: rgba(255,255,255,.8); font-weight: 600; }
+
+  .all-params .cycle-viz {
+    display: flex; align-items: center; justify-content: center;
+    gap: 20px; margin: 32px 0; padding: 24px;
+    border: 1px dashed rgba(255,255,255,.08); border-radius: 12px;
+  }
+  .all-params .cycle-viz .node {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    font-size: .95rem; color: rgba(255,255,255,.5);
+  }
+  .all-params .cycle-viz .node .icon { font-size: 1.7rem; }
+  .all-params .cycle-viz .node .label { color: rgba(255,255,255,.6); font-weight: 500; }
+  .all-params .cycle-viz .arrow { color: rgba(255,255,255,.15); font-size: 1.5rem; }
+
+  .all-params .result-box {
+    background: rgba(41,128,185,.06); border: 1px solid rgba(41,128,185,.15);
+    border-radius: 16px; padding: 24px 28px; margin-top: 12px;
+  }
+  .all-params .result-box .value { font-size: 2.4rem; font-weight: 700; color: #c0392b; }
+  .all-params .result-box .meta { font-size: 1rem; color: rgba(255,255,255,.35); margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<div class="top-bar"><div class="fill" id="progressFill"></div></div>
+
+<div class="slides" id="slides">
+
+  <!-- ─── Page 0: Hero ─── -->
+  <div class="slide">
+    <div class="page-hero">
+      <div class="badge">Group 1 · 固定標的</div>
+      <h1>🪙 Keep &amp; Wait DCA 低接</h1>
+      <p>不看技術指標 · 純價格乖離紀律低接</p>
+      <div class="quote-line">
+        <span class="s0">初始進場</span> →
+        <span class="s1">跌 X% 加碼</span> →
+        <span class="s2">漲 Y% 停利</span> →
+        <span class="s3">冷卻後重來</span>
+      </div>
+      <div class="arrow-hint">▼ 下一步</div>
+    </div>
+  </div>
+
+  <!-- ─── Page 1: 初始進場 ─── -->
+  <div class="slide">
+    <div class="step-page">
+      <div class="icon-big">🎬</div>
+      <div class="step-num">STEP 1 / 4</div>
+      <h2>初始進場</h2>
+      <div class="desc">
+        指定標的（如 <strong>2454 聯發科</strong>）啟動時，
+        直接買入 <strong>KW_INITIAL_SHARES</strong> 股，建立基本倉位。
+        不分析任何技術指標，純粹建立部位。
+      </div>
+      <div class="detail-card">
+        <dt>📌 關鍵參數</dt>
+        <dd>
+          <div class="item"><span class="key">標的</span><span class="val">2454 聯發科</span></div>
+          <div class="item"><span class="key">初始股數</span><span class="val">45 股</span></div>
+          <div class="item"><span class="key">進場時機</span><span class="val">程式啟動</span></div>
+          <div class="item"><span class="key">初始投入</span><span class="val">~NT$67,500</span></div>
+        </dd>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Page 2: 跌 X% 加碼 ─── -->
+  <div class="slide">
+    <div class="step-page">
+      <div class="icon-big">📉</div>
+      <div class="step-num">STEP 2 / 4</div>
+      <h2>跌 X% → 紀律加碼</h2>
+      <div class="desc">
+        從平均成本下跌 <strong>KW_ADD_DROP_PCT%</strong>（預設 <strong>5%</strong>），
+        自動加碼 <strong>KW_ADD_SHARES</strong> 股，降低平均成本。
+        最多 <strong>KW_MAX_ADDITIONS</strong> 次（預設 <strong>2 次</strong>），
+        避免無限攤平、資金過度集中。
+      </div>
+      <div class="detail-card">
+        <dt>📌 關鍵參數</dt>
+        <dd>
+          <div class="item"><span class="key">加碼跌幅門檻</span><span class="val">-5%</span></div>
+          <div class="item"><span class="key">每次加碼股數</span><span class="val">45 股</span></div>
+          <div class="item"><span class="key">最多加碼次數</span><span class="val">2 次</span></div>
+          <div class="item"><span class="key">總加碼上限</span><span class="val">90 股</span></div>
+        </dd>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Page 3: 漲 Y% 停利 ─── -->
+  <div class="slide">
+    <div class="step-page">
+      <div class="icon-big">📈</div>
+      <div class="step-num">STEP 3 / 4</div>
+      <h2>漲 Y% → 停利出場</h2>
+      <div class="desc">
+        從均價上漲 <strong>KW_TP_TRIGGER_PCT%</strong>（預設 <strong>15%</strong>），
+        賣出 <strong>KW_TP_SELL_RATIO%</strong>（預設 <strong>50%</strong>）持股。
+        採<b>部分停利</b>，保留剩餘倉位參與後續漲勢，
+        避免全部賣出後繼續大漲的遺憾。
+      </div>
+      <div class="detail-card">
+        <dt>📌 關鍵參數</dt>
+        <dd>
+          <div class="item"><span class="key">停利漲幅門檻</span><span class="val">+15%</span></div>
+          <div class="item"><span class="key">停利賣出比例</span><span class="val">50%</span></div>
+          <div class="item"><span class="key">保留倉位</span><span class="val">50%</span></div>
+          <div class="item"><span class="key">停利觸發頻率</span><span class="val">依市場波動</span></div>
+        </dd>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Page 4: 冷卻期 ─── -->
+  <div class="slide">
+    <div class="step-page">
+      <div class="icon-big">⏸️</div>
+      <div class="step-num">STEP 4 / 4</div>
+      <h2>冷卻期</h2>
+      <div class="desc">
+        停利賣出後進入 <strong>KW_COOLDOWN_DAYS</strong> 天（預設 <strong>30 天</strong>）冷卻期，
+        期間不進場，避免短線反覆交易被佣金侵蝕獲利。
+        期滿後自動重回「<strong>初始進場</strong>」階段，
+        開啟下一個完整的 DCA 循環。
+      </div>
+      <div class="detail-card">
+        <dt>📌 關鍵參數</dt>
+        <dd>
+          <div class="item"><span class="key">冷卻天數</span><span class="val">30 天</span></div>
+          <div class="item"><span class="key">冷卻期間</span><span class="val">不交易</span></div>
+          <div class="item"><span class="key">期滿後</span><span class="val">重回 STEP 1</span></div>
+          <div class="item"><span class="key">一個完整循環</span><span class="val">數週～數月</span></div>
+        </dd>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── Page 5: 所有參數 + 結果 ─── -->
+  <div class="slide">
+    <div class="all-params">
+      <h2>⚙️ 完整參數一覽</h2>
+      <table>
+        <tr><td>初始股數 (KW_INITIAL_SHARES)</td><td>45 股</td></tr>
+        <tr><td>加碼跌幅門檻 (KW_ADD_DROP_PCT)</td><td>5%</td></tr>
+        <tr><td>每次加碼股數 (KW_ADD_SHARES)</td><td>45 股</td></tr>
+        <tr><td>最多加碼次數 (KW_MAX_ADDITIONS)</td><td>2 次</td></tr>
+        <tr><td>停利漲幅門檻 (KW_TP_TRIGGER_PCT)</td><td>15%</td></tr>
+        <tr><td>停利賣出比例 (KW_TP_SELL_RATIO)</td><td>50%</td></tr>
+        <tr><td>冷卻天數 (KW_COOLDOWN_DAYS)</td><td>30 天</td></tr>
+      </table>
+
+      <div class="cycle-viz">
+        <div class="node"><span class="icon">🎬</span><span class="label">初始</span></div>
+        <span class="arrow">→</span>
+        <div class="node"><span class="icon">📉</span><span class="label">加碼</span></div>
+        <span class="arrow">→</span>
+        <div class="node"><span class="icon">📈</span><span class="label">停利</span></div>
+        <span class="arrow">→</span>
+        <div class="node"><span class="icon">⏸️</span><span class="label">冷卻</span></div>
+        <span class="arrow">→</span>
+        <div class="node"><span class="icon">🔄</span><span class="label">循環</span></div>
+      </div>
+
+      <div class="result-box">
+        <div class="value">+35.8%</div>
+        <div class="meta">回測 2454 聯發科 2024-2025 · 同期均線交叉 -6%</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ─── nav ─── -->
+<div class="nav">
+  <button id="prevBtn" disabled>◀</button>
+  <div class="dots" id="dotContainer"></div>
+  <button id="nextBtn">▶</button>
+  <span class="label" id="pageLabel">1 / 6</span>
+</div>
+
+<script>
+(function() {
+  const slides = document.getElementById('slides');
+  const total = document.querySelectorAll('.slide').length;
+  const dotContainer = document.getElementById('dotContainer');
+  const prevBtn = document.getElementById('prevBtn');
+  const nextBtn = document.getElementById('nextBtn');
+  const pageLabel = document.getElementById('pageLabel');
+  const fill = document.getElementById('progressFill');
+
+  let current = 0;
+
+  for (let i = 0; i < total; i++) {
+    const d = document.createElement('div'); d.className = 'dot';
+    d.addEventListener('click', () => go(i));
+    dotContainer.appendChild(d);
+  }
+
+  function go(idx) {
+    if (idx < 0) idx = 0;
+    if (idx >= total) idx = total - 1;
+    current = idx;
+    slides.style.transform = 'translateX(-' + (current * 100) + 'vw)';
+    prevBtn.disabled = current === 0;
+    nextBtn.disabled = current === total - 1;
+    pageLabel.textContent = (current + 1) + ' / ' + total;
+    fill.style.width = ((current + 1) / total * 100) + '%';
+    document.querySelectorAll('.dot').forEach((d, i) => d.classList.toggle('active', i === current));
+  }
+
+  prevBtn.addEventListener('click', () => go(current - 1));
+  nextBtn.addEventListener('click', () => go(current + 1));
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') {
+      e.preventDefault(); go(current + 1);
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault(); go(current - 1);
+    }
+  });
+
+  go(0);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>布林通道反轉策略 — 動畫說明</title>
+<style>
+  /* ── Reset & Base ── */
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: hsl(220, 18%, 10%); }
+  body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans TC', sans-serif; color: #e8e8e8; user-select: none; }
+
+  /* ── Main Stage ── */
+  #stage {
+    position: relative;
+    width: 100vw; height: 100vh;
+    display: flex; flex-direction: column;
+  }
+  #canvas-wrap {
+    flex: 1; position: relative; overflow: hidden;
+  }
+  #canvas-wrap svg { display: block; width: 100%; height: 100%; }
+
+  /* ── Scene Overlays ── */
+  .scene-overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.8s ease;
+  }
+  .scene-overlay.active { opacity: 1; }
+
+  .scene-title {
+    font-size: clamp(2rem, 5vw, 4.5rem);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-align: center;
+    line-height: 1.3;
+    text-shadow: 0 2px 20px rgba(0,0,0,0.6);
+  }
+  .scene-sub {
+    font-size: clamp(1rem, 2vw, 1.6rem);
+    font-weight: 400;
+    color: hsl(180, 30%, 70%);
+    margin-top: 0.6em;
+    letter-spacing: 0.03em;
+  }
+  .scene-accent {
+    color: #0D9488;
+  }
+  .scene-highlight {
+    color: #f59e0b;
+  }
+
+  /* Scene 1 */
+  #s1 .scene-title { font-size: clamp(2.2rem, 5.5vw, 5rem); }
+
+  /* Scene 2 */
+  #s2 .scene-sub { font-size: clamp(0.85rem, 1.6vw, 1.3rem); max-width: 70vw; }
+
+  /* Scene 3 & 4 */
+  .buy-sell-title {
+    display: flex; align-items: center; gap: 1.2em;
+    margin-bottom: 0.5em;
+  }
+  .signal-badge {
+    display: inline-block;
+    font-size: clamp(1.2rem, 2.5vw, 2rem);
+    font-weight: 800;
+    padding: 0.3em 0.8em;
+    border-radius: 4px;
+    letter-spacing: 0.05em;
+  }
+  .signal-badge.buy { background: hsl(160, 60%, 30%); color: #fff; }
+  .signal-badge.sell { background: hsl(0, 55%, 40%); color: #fff; }
+  .condition-row {
+    display: flex; gap: 1em; flex-wrap: wrap; justify-content: center;
+    margin-top: 1em;
+  }
+  .condition-chip {
+    background: hsla(0, 0%, 100%, 0.08);
+    border: 1px solid hsla(0, 0%, 100%, 0.12);
+    padding: 0.4em 1em;
+    border-radius: 4px;
+    font-size: clamp(0.75rem, 1.2vw, 1rem);
+    color: hsl(180, 20%, 70%);
+  }
+  .condition-chip.active { border-color: #0D9488; color: #0D9488; }
+
+  /* Scene 4 summary */
+  #s4 .scene-title { font-size: clamp(1.8rem, 4vw, 3.5rem); }
+  .summary-quote {
+    margin-top: 1.5em;
+    font-size: clamp(1.1rem, 2vw, 1.8rem);
+    font-weight: 500;
+    color: #f59e0b;
+    letter-spacing: 0.04em;
+    border-top: 1px solid hsla(42, 80%, 50%, 0.3);
+    padding-top: 0.8em;
+  }
+
+  /* ── Bottom Controls ── */
+  #controls {
+    height: 56px;
+    flex-shrink: 0;
+    display: flex; align-items: center; gap: 14px;
+    padding: 0 24px;
+    background: hsl(220, 15%, 13%);
+    border-top: 1px solid hsla(0,0%,100%,0.06);
+  }
+  #play-btn {
+    width: 32px; height: 32px; flex-shrink: 0;
+    background: none; border: none; cursor: pointer;
+    color: hsl(180, 30%, 70%); font-size: 18px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%; transition: background 0.2s;
+  }
+  #play-btn:hover { background: hsla(0,0%,100%,0.08); }
+  #play-btn svg { width: 18px; height: 18px; fill: currentColor; }
+
+  #progress-track {
+    flex: 1; height: 4px; background: hsla(0,0%,100%,0.12);
+    border-radius: 2px; cursor: pointer; position: relative;
+  }
+  #progress-fill {
+    height: 100%; width: 0%;
+    background: #0D9488; border-radius: 2px;
+    transition: width 50ms linear;
+  }
+  #progress-thumb {
+    position: absolute; top: 50%; left: 0%;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: #0D9488; transform: translate(-50%, -50%);
+    opacity: 0; transition: opacity 0.2s;
+    pointer-events: none;
+  }
+  #progress-track:hover #progress-thumb { opacity: 1; }
+
+  #time-label {
+    font-size: 12px; color: hsla(0,0%,100%,0.4);
+    font-variant-numeric: tabular-nums;
+    width: 60px; text-align: right; flex-shrink: 0;
+  }
+
+  /* ── Scene Labels (small indicators) ── */
+  #scene-indicators {
+    display: flex; gap: 6px; flex-shrink: 0;
+  }
+  .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: hsla(0,0%,100%,0.2);
+    transition: all 0.4s ease;
+  }
+  .dot.active { background: #0D9488; transform: scale(1.4); }
+  .dot.done { background: hsla(160, 60%, 40%, 0.5); }
+
+  /* ── Responsive ── */
+  @media (max-width: 768px) {
+    #controls { height: 48px; padding: 0 12px; gap: 10px; }
+    #s1 .scene-title, .scene-title { font-size: clamp(1.4rem, 6vw, 2.2rem); }
+    .scene-sub { font-size: clamp(0.7rem, 2.5vw, 1rem); }
+    .buy-sell-title { flex-direction: column; gap: 0.5em; }
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <div id="canvas-wrap">
+    <svg id="chart" viewBox="0 0 1000 600" preserveAspectRatio="xMidYMid meet"></svg>
+
+    <!-- Scene 1: Problem -->
+    <div class="scene-overlay" id="s1" style="justify-content:flex-end;padding-bottom:12vh;">
+      <div class="scene-title">為什麼散戶總是<br><span style="color:#ef4444;">買高</span>、<span style="color:#0D9488;">賣低</span>？</div>
+      <div class="scene-sub">📉 恐懼時拋售 · 📈 貪婪時追高</div>
+    </div>
+
+    <!-- Scene 2: Bollinger -->
+    <div class="scene-overlay" id="s2" style="justify-content:flex-end;padding-bottom:12vh;">
+      <div class="scene-title">布林通道<br><span class="scene-accent">統計學的價格走廊</span></div>
+      <div class="scene-sub">
+        <span style="display:inline-block;width:12px;height:12px;background:hsl(180,20%,70%);border-radius:2px;vertical-align:middle;margin-right:6px;"></span> 中軌：MA20 平均成本
+        <span style="display:inline-block;width:12px;height:12px;background:hsla(180,50%,50%,0.4);border-radius:2px;vertical-align:middle;margin:0 6px 0 20px;"></span> 上軌 / 下軌：±2σ 統計極限
+        <span style="display:inline-block;margin-left:20px;font-size:0.85em;color:hsl(180,20%,50%);">95.4% 價格落在通道內</span>
+      </div>
+    </div>
+
+    <!-- Scene 3: Buy -->
+    <div class="scene-overlay" id="s3" style="justify-content:flex-end;padding-bottom:10vh;">
+      <div class="buy-sell-title">
+        <span class="signal-badge buy">BUY</span>
+        <span class="scene-title" style="font-size:clamp(1.8rem,4.5vw,3.8rem);">黃金冰點</span>
+      </div>
+      <div class="scene-sub" style="font-size:clamp(1rem,2vw,1.8rem);">
+        跌過頭 <span style="color:#f59e0b;font-weight:600;">＋</span> 恐慌極點
+      </div>
+      <div class="condition-row">
+        <span class="condition-chip active">價格 &lt; 下軌（超跌）</span>
+        <span class="condition-chip active">RSI &lt; 30（恐慌）</span>
+      </div>
+    </div>
+
+    <!-- Scene 4: Sell + Summary -->
+    <div class="scene-overlay" id="s4" style="justify-content:flex-end;padding-bottom:10vh;">
+      <div class="buy-sell-title">
+        <span class="signal-badge sell">SELL</span>
+        <span class="scene-title" style="font-size:clamp(1.8rem,4.5vw,3.8rem);">瘋狂頂點</span>
+      </div>
+      <div class="scene-sub" style="font-size:clamp(1rem,2vw,1.8rem);">
+        漲過頭 <span style="color:#f59e0b;font-weight:600;">＋</span> 貪婪極點
+      </div>
+      <div class="condition-row">
+        <span class="condition-chip active">價格 &gt; 上軌（超漲）</span>
+        <span class="condition-chip active">RSI &gt; 70（貪婪）</span>
+      </div>
+      <div class="summary-quote">均值回歸 — 在恐慌時買進，在狂歡時賣出</div>
+    </div>
+
+    <!-- scene indicator dots overlayed on canvas -->
+    <div style="position:absolute;top:24px;right:32px;display:flex;gap:8px;pointer-events:none;">
+      <div class="dot" data-idx="0"></div>
+      <div class="dot" data-idx="1"></div>
+      <div class="dot" data-idx="2"></div>
+      <div class="dot" data-idx="3"></div>
+    </div>
+    <div style="position:absolute;top:24px;left:32px;pointer-events:none;font-size:13px;color:hsla(0,0%,100%,0.25);letter-spacing:0.05em;font-weight:500;">
+      BOLLINGER · RSI
+    </div>
+  </div>
+
+  <div id="controls">
+    <button id="play-btn" aria-label="播放/暫停">
+      <svg viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20"/></svg>
+    </button>
+    <div id="progress-track">
+      <div id="progress-fill"></div>
+      <div id="progress-thumb"></div>
+    </div>
+    <div id="scene-indicators">
+      <span class="dot active" data-idx="0"></span>
+      <span class="dot" data-idx="1"></span>
+      <span class="dot" data-idx="2"></span>
+      <span class="dot" data-idx="3"></span>
+    </div>
+    <div id="time-label">0:00</div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   Bollinger Strategy Animation
+   ═══════════════════════════════════════════════════════════════ */
+
+// ── Config ──
+const SCENE_DURATIONS = [10, 16, 18, 20]; // seconds per scene
+const TOTAL_DURATION = SCENE_DURATIONS.reduce((a,b)=>a+b, 0);
+const FPS = 60;
+
+// ── DOM refs ──
+const svg = document.getElementById('chart');
+const NS = 'http://www.w3.org/2000/svg';
+const playBtn = document.getElementById('play-btn');
+const progressFill = document.getElementById('progress-fill');
+const progressThumb = document.getElementById('progress-thumb');
+const progressTrack = document.getElementById('progress-track');
+const timeLabel = document.getElementById('time-label');
+const overlays = [document.getElementById('s1'), document.getElementById('s2'), document.getElementById('s3'), document.getElementById('s4')];
+const allDots = document.querySelectorAll('.dot');
+
+// ── State ──
+let playing = true;
+let elapsed = 0;   // total seconds elapsed
+let lastTs = 0;
+let rafId = null;
+
+// ═══════════════════════════════════════════════════════════════
+//  Price Data Generation
+// ═══════════════════════════════════════════════════════════════
+
+function generatePriceData(n) {
+  const prices = [];
+  let p = 100;
+  const trend = 0.02; // slight upward bias
+  for (let i = 0; i < n; i++) {
+    const drift = trend + (Math.random() - 0.48) * 0.4;
+    const noise = (Math.random() - 0.5) * 0.8;
+    // Add a big dip around 40% and a big rise around 65%
+    const t = i / n;
+    let shape = 0;
+    if (t > 0.35 && t < 0.48) shape = -3.0 * (1 - Math.abs(t - 0.415) / 0.065); // dip
+    if (t > 0.60 && t < 0.78) shape = +3.5 * (1 - Math.abs(t - 0.69) / 0.09);  // rise
+    p = p * (1 + (drift + noise + shape * 0.015) * 0.02);
+    prices.push(Math.round(p * 100) / 100);
+  }
+  return prices;
+}
+
+const PRICE_DATA = generatePriceData(120);
+const N = PRICE_DATA.length;
+
+// Helper: SMA
+function sma(data, period) {
+  const result = [];
+  for (let i = 0; i < data.length; i++) {
+    if (i < period - 1) { result.push(null); continue; }
+    let sum = 0;
+    for (let j = i - period + 1; j <= i; j++) sum += data[j];
+    result.push(sum / period);
+  }
+  return result;
+}
+
+// Helper: std dev
+function rollingStd(data, period, means) {
+  const result = [];
+  for (let i = 0; i < data.length; i++) {
+    if (i < period - 1) { result.push(null); continue; }
+    let sqSum = 0;
+    for (let j = i - period + 1; j <= i; j++) sqSum += (data[j] - means[i]) ** 2;
+    result.push(Math.sqrt(sqSum / period));
+  }
+  return result;
+}
+
+const MA20 = sma(PRICE_DATA, 20);
+const STD = rollingStd(PRICE_DATA, 20, MA20);
+const UPPER = MA20.map((m, i) => m === null ? null : m + 2 * STD[i]);
+const LOWER = MA20.map((m, i) => m === null ? null : m - 2 * STD[i]);
+
+// RSI(5)
+function calcRSI(data, period) {
+  const result = [null];
+  for (let i = 1; i < data.length; i++) {
+    if (i < period) { result.push(null); continue; }
+    let gains = 0, losses = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      const diff = data[j] - data[j - 1];
+      if (diff > 0) gains += diff; else losses -= diff;
+    }
+    if (losses === 0) { result.push(100); continue; }
+    const rs = gains / losses;
+    result.push(100 - 100 / (1 + rs));
+  }
+  return result;
+}
+const RSI5 = calcRSI(PRICE_DATA, 5);
+
+// Price range for y-scaling
+const allVals = PRICE_DATA.filter(v => v !== null);
+let priceMin = Math.min(...allVals);
+let priceMax = Math.max(...allVals);
+const pad = (priceMax - priceMin) * 0.15;
+priceMin -= pad;
+priceMax += pad;
+
+// Pre-compute buy/sell indices (use yesterday's band to avoid self-inclusion)
+const BUY_IDX = (() => { for (let i = 21; i < N; i++) if (LOWER[i-1] !== null && PRICE_DATA[i] < LOWER[i-1]) return i; return -1; })();
+const SELL_IDX = (() => { for (let i = 21; i < N; i++) if (UPPER[i-1] !== null && PRICE_DATA[i] > UPPER[i-1]) return i; return -1; })();
+
+function p2y(p) { return 600 - ((p - priceMin) / (priceMax - priceMin)) * 520 - 40; }
+function x(i) { return 40 + (i / (N - 1)) * 920; }
+
+// ═══════════════════════════════════════════════════════════════
+//  SVG Rendering
+// ═══════════════════════════════════════════════════════════════
+
+function buildChart() {
+  svg.innerHTML = '';
+
+  // defs
+  const defs = document.createElementNS(NS, 'defs');
+  defs.innerHTML = `
+    <linearGradient id="bandGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="hsla(180,50%,50%,0.12)"/>
+      <stop offset="100%" stop-color="hsla(180,50%,50%,0.04)"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="chartClip"><rect x="30" y="20" width="940" height="560"/></clipPath>
+  `;
+  svg.appendChild(defs);
+
+  // background grid
+  for (let y = 60; y < 560; y += 80) {
+    const line = document.createElementNS(NS, 'line');
+    line.setAttribute('x1', '40'); line.setAttribute('x2', '960');
+    line.setAttribute('y1', y); line.setAttribute('y2', y);
+    line.setAttribute('stroke', 'hsla(0,0%,100%,0.04)');
+    line.setAttribute('stroke-width', '1');
+    svg.appendChild(line);
+  }
+
+  // Band group (upper/lower fill)
+  const bandGroup = document.createElementNS(NS, 'g');
+  bandGroup.id = 'band-group';
+  svg.appendChild(bandGroup);
+
+  // Upper/lower band boundary polylines
+  const upperPoly = document.createElementNS(NS, 'polyline');
+  upperPoly.id = 'upper-band-line';
+  upperPoly.setAttribute('fill', 'none');
+  upperPoly.setAttribute('stroke', 'hsla(42,80%,55%,0.35)');
+  upperPoly.setAttribute('stroke-width', '1.5');
+  svg.appendChild(upperPoly);
+
+  const lowerPoly = document.createElementNS(NS, 'polyline');
+  lowerPoly.id = 'lower-band-line';
+  lowerPoly.setAttribute('fill', 'none');
+  lowerPoly.setAttribute('stroke', 'hsla(160,60%,50%,0.35)');
+  lowerPoly.setAttribute('stroke-width', '1.5');
+  svg.appendChild(lowerPoly);
+
+  // Middle MA20 line
+  const maPath = document.createElementNS(NS, 'path');
+  maPath.id = 'ma-line';
+  maPath.setAttribute('fill', 'none');
+  maPath.setAttribute('stroke', 'hsl(180,20%,70%)');
+  maPath.setAttribute('stroke-width', '2');
+  maPath.setAttribute('stroke-dasharray', '4,3');
+  svg.appendChild(maPath);
+
+  // Price line
+  const pricePath = document.createElementNS(NS, 'path');
+  pricePath.id = 'price-line';
+  pricePath.setAttribute('fill', 'none');
+  pricePath.setAttribute('stroke', 'hsl(42,80%,55%)');
+  pricePath.setAttribute('stroke-width', '2.5');
+  pricePath.setAttribute('filter', 'url(#glow)');
+  svg.appendChild(pricePath);
+
+  // RSI text indicator
+  const rsiGroup = document.createElementNS(NS, 'g');
+  rsiGroup.id = 'rsi-group';
+  svg.appendChild(rsiGroup);
+
+  // Band labels
+  const upperLabel = document.createElementNS(NS, 'text');
+  upperLabel.id = 'upper-label';
+  upperLabel.setAttribute('x', '38'); upperLabel.setAttribute('y', '48');
+  upperLabel.setAttribute('fill', 'hsla(180,50%,60%,0.35)');
+  upperLabel.setAttribute('font-size', '11');
+  upperLabel.setAttribute('font-family', 'system-ui');
+  upperLabel.textContent = '上軌 (Upper)';
+  svg.appendChild(upperLabel);
+
+  const lowerLabel = document.createElementNS(NS, 'text');
+  lowerLabel.id = 'lower-label';
+  lowerLabel.setAttribute('x', '38'); lowerLabel.setAttribute('y', '555');
+  lowerLabel.setAttribute('fill', 'hsla(180,50%,60%,0.35)');
+  lowerLabel.setAttribute('font-size', '11');
+  lowerLabel.setAttribute('font-family', 'system-ui');
+  lowerLabel.textContent = '下軌 (Lower)';
+  svg.appendChild(lowerLabel);
+}
+
+// Update chart for current reveal index
+function updateChart(revealIdx) {
+  const visible = Math.max(1, Math.floor(revealIdx));
+  const frac = revealIdx - visible;
+  const bandG = document.getElementById('band-group');
+  const maLine = document.getElementById('ma-line');
+  const priceLine = document.getElementById('price-line');
+  const rsiGroup = document.getElementById('rsi-group');
+
+  // Build band polygon up to visible
+  let upperD = '', lowerD = '';
+  let maD = '', priceD = '';
+
+  for (let i = 0; i < Math.min(visible, N); i++) {
+    const xi = x(i);
+    const nextFrac = (i === visible - 1 && frac > 0) ? frac : 1;
+    if (i === visible - 1 && frac > 0) {
+      // partial: lerp between this and previous for a smooth reveal
+    }
+    if (MA20[i] !== null) {
+      const my = p2y(MA20[i]);
+      maD += (i === 0 ? 'M' : 'L') + xi + ',' + my;
+    }
+    const py = p2y(PRICE_DATA[i]);
+    priceD += (i === 0 ? 'M' : 'L') + xi + ',' + py;
+
+    if (UPPER[i] !== null && LOWER[i] !== null) {
+      const uy = p2y(UPPER[i]);
+      const ly = p2y(LOWER[i]);
+      if (upperD === '') {
+        upperD = 'M' + xi + ',' + uy;
+        lowerD = 'M' + xi + ',' + ly;
+      } else {
+        upperD += 'L' + xi + ',' + uy;
+        lowerD += 'L' + xi + ',' + ly;
+      }
+    }
+  }
+
+  // Band fill: upperD → back along lowerD → close
+  if (upperD && lowerD) {
+    let bandD = upperD;
+    for (let i = Math.min(visible, N) - 1; i >= 0; i--) {
+      if (LOWER[i] !== null) {
+        bandD += 'L' + x(i) + ',' + p2y(LOWER[i]);
+      }
+    }
+    bandD += 'Z';
+    bandG.innerHTML = '';
+    const bandPath = document.createElementNS(NS, 'path');
+    bandPath.setAttribute('d', bandD);
+    bandPath.setAttribute('fill', 'url(#bandGrad)');
+    bandPath.setAttribute('stroke', 'none');
+    bandG.appendChild(bandPath);
+  }
+
+  maLine.setAttribute('d', maD || 'M0,0');
+  priceLine.setAttribute('d', priceD || 'M0,0');
+
+  // Update band boundary lines & highlight for buy/sell scenes
+  const sceneIdx = getSceneAtTime(elapsed);
+  const upperBandLine = document.getElementById('upper-band-line');
+  const lowerBandLine = document.getElementById('lower-band-line');
+
+  const upperPts = Array.from({length: Math.min(visible, N)}, (_, i) =>
+    UPPER[i] !== null ? `${x(i)},${p2y(UPPER[i])}` : null).filter(Boolean).join(' ');
+  const lowerPts = Array.from({length: Math.min(visible, N)}, (_, i) =>
+    LOWER[i] !== null ? `${x(i)},${p2y(LOWER[i])}` : null).filter(Boolean).join(' ');
+
+  upperBandLine.setAttribute('points', upperPts);
+  lowerBandLine.setAttribute('points', lowerPts);
+
+  // Scene-based highlighting
+  const isSellScene = (sceneIdx === 3);
+  const isBuyScene = (sceneIdx === 2);
+  const defaultUpperColor = 'hsla(42,80%,55%,0.35)';
+  const defaultLowerColor = 'hsla(160,60%,50%,0.35)';
+  upperBandLine.setAttribute('stroke', isSellScene ? '#ef4444' : defaultUpperColor);
+  upperBandLine.setAttribute('stroke-width', isSellScene ? '3' : '1.5');
+  upperBandLine.setAttribute('opacity', isSellScene ? (0.6 + 0.4 * Math.sin(elapsed * 4)) : '1');
+  lowerBandLine.setAttribute('stroke', isBuyScene ? '#ef4444' : defaultLowerColor);
+  lowerBandLine.setAttribute('stroke-width', isBuyScene ? '3' : '1.5');
+  lowerBandLine.setAttribute('opacity', isBuyScene ? (0.6 + 0.4 * Math.sin(elapsed * 4)) : '1');
+
+  // RSI indicator
+  rsiGroup.innerHTML = '';
+  if (visible > 20) {
+    // 買/賣場景鎖定顯示觸發當下的 RSI，而非最後一根 K 棒
+    let rsiVal;
+    if (isBuyScene && BUY_IDX >= 0) {
+      rsiVal = RSI5[BUY_IDX];
+    } else if (isSellScene && SELL_IDX >= 0) {
+      rsiVal = RSI5[SELL_IDX];
+    } else {
+      rsiVal = RSI5[Math.min(visible - 1, RSI5.length - 1)];
+    }
+    if (rsiVal !== null && rsiVal !== undefined) {
+      const rsiBox = document.createElementNS(NS, 'rect');
+      rsiBox.setAttribute('x', '870'); rsiBox.setAttribute('y', '30');
+      rsiBox.setAttribute('width', '100'); rsiBox.setAttribute('height', '44');
+      rsiBox.setAttribute('rx', '4');
+      rsiBox.setAttribute('fill', 'hsla(0,0%,0%,0.5)');
+      rsiBox.setAttribute('stroke', rsiVal < 30 ? '#0D9488' : rsiVal > 70 ? '#ef4444' : 'hsla(0,0%,100%,0.15)');
+      rsiBox.setAttribute('stroke-width', '1');
+      rsiGroup.appendChild(rsiBox);
+
+      const rsiText = document.createElementNS(NS, 'text');
+      rsiText.setAttribute('x', '920'); rsiText.setAttribute('y', '48');
+      rsiText.setAttribute('text-anchor', 'middle');
+      rsiText.setAttribute('fill', rsiVal < 30 ? '#0D9488' : rsiVal > 70 ? '#ef4444' : 'hsl(0,0%,70%)');
+      rsiText.setAttribute('font-size', '16');
+      rsiText.setAttribute('font-weight', '700');
+      rsiText.setAttribute('font-family', 'system-ui');
+      rsiText.textContent = 'RSI ' + Math.round(rsiVal);
+      rsiGroup.appendChild(rsiText);
+
+      const rsiLabel = document.createElementNS(NS, 'text');
+      rsiLabel.setAttribute('x', '920'); rsiLabel.setAttribute('y', '64');
+      rsiLabel.setAttribute('text-anchor', 'middle');
+      rsiLabel.setAttribute('fill', 'hsla(0,0%,100%,0.3)');
+      rsiLabel.setAttribute('font-size', '10');
+      rsiLabel.setAttribute('font-family', 'system-ui');
+      rsiLabel.textContent = rsiVal < 30 ? '超賣' : rsiVal > 70 ? '超買' : '中性';
+      rsiGroup.appendChild(rsiLabel);
+
+      // RSI dial/bar
+      const barBg = document.createElementNS(NS, 'rect');
+      barBg.setAttribute('x', '878'); barBg.setAttribute('y', '64');
+      barBg.setAttribute('width', '84'); barBg.setAttribute('height', '4');
+      barBg.setAttribute('rx', '2');
+      barBg.setAttribute('fill', 'hsla(0,0%,100%,0.1)');
+      rsiGroup.appendChild(barBg);
+
+      const barFill = document.createElementNS(NS, 'rect');
+      barFill.setAttribute('x', '878'); barFill.setAttribute('y', '64');
+      barFill.setAttribute('width', (rsiVal/100)*84); barFill.setAttribute('height', '4');
+      barFill.setAttribute('rx', '2');
+      const rsiColor = rsiVal < 30 ? '#0D9488' : rsiVal > 70 ? '#ef4444' : 'hsl(0,0%,50%)';
+      barFill.setAttribute('fill', rsiColor);
+      rsiGroup.appendChild(barFill);
+    }
+  }
+
+  // Markers — use pre-computed BUY_IDX/SELL_IDX (yesterday's band, avoids self-inclusion)
+  document.querySelectorAll('.zone-marker').forEach(el => el.remove());
+  if (isBuyScene && BUY_IDX >= 0 && BUY_IDX < visible) {
+    const cx = x(BUY_IDX), cy = p2y(PRICE_DATA[BUY_IDX]);
+    const g = document.createElementNS(NS, 'g');
+    g.classList.add('zone-marker');
+    const c = document.createElementNS(NS, 'circle');
+    c.setAttribute('cx', cx); c.setAttribute('cy', cy); c.setAttribute('r', '5');
+    c.setAttribute('fill', 'hsla(160,60%,50%,0.3)'); c.setAttribute('stroke', '#0D9488'); c.setAttribute('stroke-width', '2');
+    g.appendChild(c);
+    const t = document.createElementNS(NS, 'text');
+    t.setAttribute('x', cx);     t.setAttribute('y', cy - 40); t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('fill', '#0D9488'); t.setAttribute('font-size', '18'); t.setAttribute('font-weight', '700');
+    t.textContent = '▲';
+    g.appendChild(t);
+    svg.appendChild(g);
+  } else if (isSellScene && SELL_IDX >= 0 && SELL_IDX < visible) {
+    const cx = x(SELL_IDX), cy = p2y(PRICE_DATA[SELL_IDX]);
+    const g = document.createElementNS(NS, 'g');
+    g.classList.add('zone-marker');
+    const c = document.createElementNS(NS, 'circle');
+    c.setAttribute('cx', cx); c.setAttribute('cy', cy); c.setAttribute('r', '5');
+    c.setAttribute('fill', 'hsla(0,55%,50%,0.3)'); c.setAttribute('stroke', '#ef4444'); c.setAttribute('stroke-width', '2');
+    g.appendChild(c);
+    const t = document.createElementNS(NS, 'text');
+    t.setAttribute('x', cx); t.setAttribute('y', cy + 16); t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('fill', '#ef4444'); t.setAttribute('font-size', '18'); t.setAttribute('font-weight', '700');
+    t.textContent = '▼';
+    g.appendChild(t);
+    svg.appendChild(g);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Scene Management
+// ═══════════════════════════════════════════════════════════════
+
+function getSceneAtTime(t) {
+  let acc = 0;
+  for (let i = 0; i < SCENE_DURATIONS.length; i++) {
+    acc += SCENE_DURATIONS[i];
+    if (t < acc) return i;
+  }
+  return SCENE_DURATIONS.length - 1;
+}
+
+function getSceneProgress(t) {
+  let acc = 0;
+  for (let i = 0; i < SCENE_DURATIONS.length; i++) {
+    if (t < acc + SCENE_DURATIONS[i]) {
+      return (t - acc) / SCENE_DURATIONS[i];
+    }
+    acc += SCENE_DURATIONS[i];
+  }
+  return 1;
+}
+
+function updateScenes(t) {
+  const current = getSceneAtTime(t);
+  overlays.forEach((el, i) => {
+    const isActive = (i === current);
+    el.classList.toggle('active', isActive);
+  });
+
+  // advance dots
+  allDots.forEach((dot, i) => {
+    dot.classList.toggle('active', i === current);
+    dot.classList.toggle('done', i < current);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Main Loop
+// ═══════════════════════════════════════════════════════════════
+
+function loop(ts) {
+  if (!lastTs) lastTs = ts;
+  const dt = (ts - lastTs) / 1000;
+  lastTs = ts;
+
+  if (playing) {
+    elapsed += dt;
+    if (elapsed >= TOTAL_DURATION) {
+      elapsed = TOTAL_DURATION;
+      playing = false;
+      updatePlayButton();
+    }
+  }
+
+  // Update UI
+  const progress = Math.min(elapsed / TOTAL_DURATION, 1);
+  progressFill.style.width = (progress * 100) + '%';
+  progressThumb.style.left = (progress * 100) + '%';
+
+  const mins = Math.floor(elapsed / 60);
+  const secs = Math.floor(elapsed % 60);
+  timeLabel.textContent = mins + ':' + String(secs).padStart(2, '0');
+
+  // Chart reveal: full after 3s; then stays full
+  const revealProgress = Math.min(elapsed / 3, 1);
+  const revealIdx = revealProgress * N;
+  updateChart(revealIdx);
+
+  // Scene overlays
+  updateScenes(elapsed);
+
+  rafId = requestAnimationFrame(loop);
+}
+
+function updatePlayButton() {
+  playBtn.innerHTML = playing
+    ? '<svg viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20"/></svg>'
+    : '<svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
+}
+
+// Play/Pause toggle
+playBtn.addEventListener('click', () => {
+  playing = !playing;
+  if (playing) {
+    lastTs = 0;
+    if (elapsed >= TOTAL_DURATION) elapsed = 0;
+    rafId = requestAnimationFrame(loop);
+  }
+  updatePlayButton();
+});
+
+// Progress track seeking
+progressTrack.addEventListener('click', (e) => {
+  const rect = progressTrack.getBoundingClientRect();
+  const pct = (e.clientX - rect.left) / rect.width;
+  elapsed = Math.min(pct * TOTAL_DURATION, TOTAL_DURATION);
+  if (!playing) {
+    playing = true;
+    lastTs = 0;
+    rafId = requestAnimationFrame(loop);
+    updatePlayButton();
+  }
+});
+
+// ── Init ──
+buildChart();
+lastTs = 0;
+rafId = requestAnimationFrame(loop);
+updatePlayButton();
+
+</script>
+</body>
+</html>
