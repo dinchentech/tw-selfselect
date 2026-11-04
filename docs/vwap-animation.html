@@ -232,14 +232,29 @@ let rafId = null;
 /* ── Price Data Generation ──
    VWAP needs: price oscillates around a "true value" (VWAP),
    with sharp dips below the lower band and spikes above the upper band. */
+// 固定種子 PRNG：同一條走勢每次載入都一樣（原本用 Math.random，每次重整都不同 ⇒
+// 影片與網頁不是同一條、買賣點位置也亂跳；2026-11-04 修正）
+// 除錯時可在 console 執行 window.__SEED = 12345 後重整，試不同種子。
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+// 預設種子 6：實測 BUY i=44（下偏離、RSI 0）、SELL i=91（上偏離、RSI 100）
+const PRICE_SEED = (typeof window !== 'undefined' && window.__SEED) ? window.__SEED : 6;
+
 function generatePriceData(n) {
   const prices = [];
+  const rnd = mulberry32(PRICE_SEED);
   let p = 100;
   for (let i = 0; i < n; i++) {
     const t = i / n;
     // The VWAP itself drifts slowly upward
     // Price oscillates around VWAP with occasional extreme deviations
-    let move = (Math.random() - 0.5) * 0.5;
+    let move = (rnd() - 0.5) * 0.5;
     // Add mean reversion toward ~100
     move += (100 - p) * 0.03;
     // Sharp dip at 30-42%
@@ -267,8 +282,9 @@ const N = PRICE_DATA.length;
 function calcVWAP(prices) {
   const vwap = [];
   let cum = 0, vol = 0;
+  const rnd = mulberry32(PRICE_SEED ^ 0x27d4eb2f);
   for (let i = 0; i < prices.length; i++) {
-    const v = 1 + Math.random() * 0.5; // random volume-ish weight
+    const v = 1 + rnd() * 0.5; // volume-ish weight（固定種子）
     cum += prices[i] * v;
     vol += v;
     vwap.push(Math.round((cum / vol) * 100) / 100);
@@ -315,8 +331,20 @@ function calcRSI(data, period) {
 const RSI5 = calcRSI(PRICE_DATA, 5);
 
 // Pre-compute buy/sell indices (yesterday's bands)
-const BUY_IDX = (() => { for (let i = 22; i < N; i++) if (LOWER[i-1] !== null && PRICE_DATA[i] < LOWER[i-1] && RSI5[i] < 30) return i; return -1; })();
-const SELL_IDX = (() => { for (let i = 22; i < N; i++) if (UPPER[i-1] !== null && PRICE_DATA[i] > UPPER[i-1] && RSI5[i] > 70) return i; return -1; })();
+// 時序強制「先買後賣」：均值回歸是先偏離到下軌買、後偏離到上軌賣；
+// 各自找第一個命中會出現「賣點比買點早」（2026-11-04 修正）
+const SIGNALS = (() => {
+  const buys = [], sells = [];
+  for (let i = 22; i < N; i++) {
+    if (LOWER[i-1] !== null && PRICE_DATA[i] < LOWER[i-1] && RSI5[i] !== null && RSI5[i] < 30) buys.push(i);
+    if (UPPER[i-1] !== null && PRICE_DATA[i] > UPPER[i-1] && RSI5[i] !== null && RSI5[i] > 70) sells.push(i);
+  }
+  const buy = buys.length ? buys[0] : -1;
+  const sell = buy >= 0 ? (sells.find((i) => i > buy) ?? -1) : (sells.length ? sells[0] : -1);
+  return { buy, sell };
+})();
+const BUY_IDX = SIGNALS.buy;
+const SELL_IDX = SIGNALS.sell;
 
 // Scaling
 const allVals = [].concat(PRICE_DATA, VWAP);
