@@ -249,8 +249,8 @@ function mulberry32(a) {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-// 預設種子 14：實測 BUY i=64（突破段）、SELL i=105（跌破段）
-const PRICE_SEED = (typeof window !== 'undefined' && window.__SEED) ? window.__SEED : 14;
+// 預設種子 23：實測 BUY i=64（突破當根，ATR 1.05%）、SELL i=103（山頂 i=101 之後 2 根、只回落 1.3%，ATR 1.0%）
+const PRICE_SEED = (typeof window !== 'undefined' && window.__SEED) ? window.__SEED : 23;
 
 function generatePriceData(n) {
   const prices = [];
@@ -273,11 +273,12 @@ function generatePriceData(n) {
       // Trend up
       move = 0.2 + (rnd() - 0.3) * 0.4;
     } else if (t < 0.78) {
-      // High plateau
-      move = (rnd() - 0.5) * 0.4;
-    } else if (t < 0.83) {
-      // Breakdown
-      move = -0.8 - rnd() * 0.5;
+      // 衝高：一路走高到波段高點（原本這裡是「高檔盤整」，山頂會提前 10 幾根，
+      // 導致賣點離高點很遠、看起來「對不準」——2026-11-04 修正）
+      move = 0.30 + (rnd() - 0.4) * 0.3;
+    } else if (t < 0.86) {
+      // 急殺：跌破 20 日最低就停損（斜率做陡，賣點才會貼著山頂右側）
+      move = -2.4 - rnd() * 0.7;
     } else {
       // Low plateau
       move = (rnd() - 0.5) * 0.3;
