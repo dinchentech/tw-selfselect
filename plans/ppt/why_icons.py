@@ -203,12 +203,87 @@ def _flask(d, **kw):
     _line(d, (0.36, 0.58, 0.64, 0.58), fill=ACCENT, w=9)
 
 
+def _percent(d, **kw):
+    """年化／報酬率：％ 符號。"""
+    _circle(d, 0.42, 0.42, 0.075, w=11)
+    _circle(d, 0.58, 0.58, 0.075, w=11)
+    _line(d, (0.63, 0.35, 0.37, 0.65), fill=ACCENT, w=11)
+
+
+def _divide(d, **kw):
+    """比率／每單位：÷ 符號（本益比、夏普都是「除以」）。"""
+    _line(d, (0.30, 0.50, 0.70, 0.50))
+    _dot(d, 0.50, 0.31, 0.042)
+    _dot(d, 0.50, 0.69, 0.042, fill=ACCENT)
+
+
+def _scale(d, **kw):
+    """取捨／規模：天平（橫樑＋兩個半圓托盤＋支柱）。"""
+    _line(d, (0.50, 0.32, 0.50, 0.72), w=11)          # 支柱
+    _line(d, (0.34, 0.74, 0.66, 0.74), w=10)          # 底座
+    _line(d, (0.20, 0.38, 0.80, 0.38), w=11)          # 橫樑
+    for cx in (0.22, 0.78):                            # 兩側吊索＋托盤
+        _line(d, (cx, 0.38, cx, 0.50), w=8)
+        _arc(d, (cx - 0.11, 0.42, cx + 0.11, 0.62), 0, 180, w=9)
+    _dot(d, 0.50, 0.32, 0.032)                         # 支點
+
+
+def _candle(d, **kw):
+    """K 線：一根紅（漲）一根綠（跌）蠟燭。"""
+    for cx, body, color in ((0.36, (0.42, 0.74), ACCENT), (0.64, (0.30, 0.58), (0x4F, 0xC3, 0x8A, 255))):
+        top, bot = body
+        d.line([_p(cx, 0.22), _p(cx, 0.26)], fill=color, width=9)
+        d.line([_p(cx, bot), _p(cx, 0.78)], fill=color, width=9)
+        d.rectangle([_p(cx - 0.075, top), _p(cx + 0.075, bot)], outline=color, width=9)
+
+
+def _ma_lines(d, **kw):
+    """均線：三條不同週期的平滑線（短／中／長）。"""
+    for k, (color, lift) in enumerate(((MUTED, 0.12), ((0x4C, 0x8F, 0xD1, 255), 0.06), (ACCENT, 0.0))):
+        _line(d, (0.20, 0.62 - lift / 2, 0.34, 0.52 - lift, 0.48, 0.56 - lift,
+                  0.62, 0.40 - lift, 0.80, 0.34 - lift), fill=color, w=9)
+
+
+def _pulse(d, **kw):
+    """心率／RSI：心跳折線。"""
+    _line(d, (0.18, 0.55, 0.34, 0.55, 0.42, 0.30, 0.50, 0.76, 0.58, 0.46,
+              0.66, 0.55, 0.82, 0.55), fill=ACCENT)
+
+
+def _range(d, **kw):
+    """ATR：上下雙箭頭＝一天平均的振幅。"""
+    _line(d, (0.34, 0.26, 0.34, 0.74), w=10)
+    _line(d, (0.26, 0.34, 0.34, 0.25, 0.42, 0.34), w=9)
+    _line(d, (0.26, 0.66, 0.34, 0.75, 0.42, 0.66), w=9)
+    for y in (0.30, 0.50, 0.70):
+        _line(d, (0.54, y, 0.80, y), fill=MUTED, w=8)
+
+
+def _bars(d, **kw):
+    """成交量：三根高低不同的柱。"""
+    for cx, h in ((0.30, 0.30), (0.50, 0.52), (0.70, 0.40)):
+        d.rectangle([_p(cx - 0.07, 0.76 - h), _p(cx + 0.07, 0.76)],
+                    outline=ACCENT if cx == 0.50 else GLYPH, width=9)
+
+
+def _thermo(d, **kw):
+    """情緒溫度計（KD）。"""
+    d.rounded_rectangle([_p(0.42, 0.24), _p(0.58, 0.62)], radius=int(0.08 * S), outline=GLYPH, width=10)
+    _circle(d, 0.50, 0.72, 0.095)
+    _line(d, (0.50, 0.62, 0.50, 0.72), fill=ACCENT, w=9)
+    for y in (0.32, 0.42, 0.52):
+        _line(d, (0.60, y, 0.66, y), fill=MUTED, w=8)
+
+
 GLYPHS = {
     "chip": _chip, "coins": _coins, "tag": _tag, "person": _person, "gauge": _gauge,
     "tag_x": _tag_x, "person_x": _person_x, "robot_x": _robot_x,
     "chart_x": _chart_x, "code": _code, "robot": _robot,
     "gear_check": _gear_check, "arrow_up": _arrow_up, "valley": _valley,
     "x_circle": _x_circle, "calendar": _calendar, "warn": _warn, "flask": _flask,
+    "percent": _percent, "divide": _divide, "scale": _scale,
+    "candle": _candle, "ma_lines": _ma_lines, "pulse": _pulse, "range": _range,
+    "bars": _bars, "thermo": _thermo,
 }
 
 

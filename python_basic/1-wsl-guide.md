@@ -135,12 +135,14 @@ mkdir -p a/b/c          # 建立巢狀目錄
 ├── home/
 │   └── frank/               ← 你的家目錄（大部分工作在此）
 │       └── tw-selfselect/   ← 交易程式專案目錄
-│           ├── live_trader_multi.py  ← 主程式
-│           ├── strategies/           ← 策略模組
-│           ├── core/                 ← 核心功能
+│           ├── selfselect_trader.py  ← 主程式（每月選股＋每日下單）
+│           ├── backtest.py           ← 回測
+│           ├── strategies/           ← 策略模組（四支固定策略＋auto／keep_wait）
+│           ├── scripts/              ← 選股、儀表板、維運工具
+│           ├── core/                 ← 核心功能（風控、選股排程、券商介面）
 │           ├── .env                  ← 設定檔（含 API Key，**不要 commit**）
-│           ├── deploy.sh             ← 部署腳本
-│           └── logs/                 ← 執行日誌
+│           ├── deploy_source.sh      ← 部署腳本（由使用者本人手動執行）
+│           └── logs/                 ← 執行日誌＋三本帳（holdings／performance／分帳本）
 │
 ├── mnt/                    ← Windows 磁碟掛載
 │   ├── c/                  ← C: 槽

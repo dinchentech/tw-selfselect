@@ -1,5 +1,5 @@
 """
-TW AutoTrader Python 基礎 - 第 3 週
+TW SelfSelect Python 基礎 - 第 3 週
 條件判斷：if/else
 
 這個程式會：

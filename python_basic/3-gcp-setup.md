@@ -15,7 +15,7 @@
 3. **填寫帳單資訊**
    - 需要綁定信用卡（用於身份驗證）
    - 新用戶可獲得 **$300 美元免費額度**（有效期 90 天）
-   - TW AutoTrader 使用 e2-micro 規格，每月約 $6-8 美元，遠低於免費額度
+   - TW SelfSelect 使用 e2-micro 規格，每月約 $6-8 美元，遠低於免費額度
 
 4. **建立專案**
    - 進入 GCP Console：https://console.cloud.google.com

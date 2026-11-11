@@ -5,6 +5,9 @@
 # 用法:
 #   ./generate_narration.sh extract <ppt>                  # 1. 抽取逐頁文字（給 AI 寫講稿用）
 #   ./generate_narration.sh build   <ppt> <script.md>      # 2. 講稿 → 配音 + 講稿版 + 配音版
+#   ./generate_narration.sh revoice <ppt> <script.md> [narration_dir]
+#                                                          # 3. 沿用既有配音，只重做備註＋嵌入
+#                                                          #    （改版面／改標題、旁白沒動時用；不呼叫 TTS）
 #
 # 前置需求:
 #   - node 18+, ffmpeg/ffprobe, python3 + python-pptx
@@ -134,9 +137,16 @@ PYEOF
   # 2. 跑 narrate-pipeline（逐段 TTS + 拼接 + timeline）
   info "2/4 TTS 配音（17 段約需 2-5 分鐘）"
   node "$PIPELINE" --script "$pipe_script" --out-dir "$out_dir" || die "narrate-pipeline 失敗"
+  run_embed "$ppt" "$script_md" "$out_dir" "$notes_pptx" "$voice_pptx"
+  report_done "$out_dir" "$notes_pptx" "$voice_pptx"
+}
 
-  # 3+4. 講稿寫入備註 → 講稿版; 音訊嵌入 → 配音版
-  info "3/4 產生講稿版 + 配音版 PPTX"
+# ── 3+4. 講稿寫入備註（講稿版）＋音訊嵌入（配音版）─────────────────────────
+#   參數: <ppt> <script.md> <narration_dir> <notes_pptx> <voice_pptx>
+#   build 與 revoice 共用；revoice 只用既有音檔、不呼叫 TTS。
+run_embed() {
+  local ppt="$1" script_md="$2" out_dir="$3" notes_pptx="$4" voice_pptx="$5"
+  info "3/4 產生講稿版 + 配音版 PPTX（音源：${out_dir##*/}）"
   "$PYTHON" - "$ppt" "$script_md" "$out_dir" "$notes_pptx" "$voice_pptx" <<'PYEOF'
 import re, sys, hashlib, os
 from pathlib import Path
@@ -245,7 +255,11 @@ for i, slide in enumerate(prs3.slides, 1):
     assert hashlib.md5(part.blob).hexdigest() == hashlib.md5(expect).hexdigest(), f"第 {i} 頁音訊不一致"
 print(f"  ✅ 驗證通過: {len(prs3.slides)} 頁備註+音訊全部正確")
 PYEOF
+}
 
+# ── 完成訊息 ────────────────────────────────────────────────────────────────
+report_done() {
+  local out_dir="$1" notes_pptx="$2" voice_pptx="$3"
   # 完成
   local total
   total=$("$PYTHON" -c "
@@ -260,11 +274,38 @@ print(f'{t[\"totalDuration\"]/60:.1f} 分鐘')
   echo "🗣 $out_dir/voiceover.mp3  （整段配音 ${total}）"
 }
 
+# ── 子命令: revoice ────────────────────────────────────────────────────────
+#   已有配音（_narration_*/audio）時，只重做「備註 + 音訊嵌入」→ 講稿版／配音版，
+#   不呼叫 TTS。改版面、改標題、修錯字（旁白沒動）時用這個，之後再重出 MP4。
+#   用法: ./generate_narration.sh revoice <ppt> <script.md> [narration_dir]
+cmd_revoice() {
+  local ppt="$1" script_md="$2" narr="${3:-}"
+  [ -f "$ppt" ]      || die "簡報不存在: $ppt"
+  [ -f "$script_md" ] || die "講稿不存在: $script_md"
+  grep -q "^## slide-" "$script_md" || die "講稿格式不符（需 ## slide-N 分段）"
+  local base="${ppt%.pptx}"
+  local dir="$(dirname "$ppt")"
+  local out_base="${base%-講稿版}"
+  local notes_pptx="$out_base-講稿版.pptx"
+  local voice_pptx="$out_base-配音版.pptx"
+  if [ -z "$narr" ]; then
+    narr="$(ls -dt "$dir"/_narration_*/timeline.json 2>/dev/null | head -1)"
+    narr="${narr%/timeline.json}"
+  fi
+  [ -n "$narr" ] && [ -f "$narr/timeline.json" ] || die "找不到既有配音目錄（需要 timeline.json）；可指定第 3 個參數"
+  [ -d "$narr/audio" ] || die "配音目錄缺少 audio/: $narr"
+  info "沿用既有配音：${narr##*/}（不呼叫 TTS）"
+  run_embed "$ppt" "$script_md" "$narr" "$notes_pptx" "$voice_pptx"
+  report_done "$narr" "$notes_pptx" "$voice_pptx"
+}
+
+
 # ── 主流程 ─────────────────────────────────────────────────────────────────
 [ $# -ge 2 ] || { sed -n '3,16p' "$0"; exit 1; }
 check_env
 case "$1" in
   extract) cmd_extract "$2" ;;
   build)   [ $# -ge 3 ] || die "用法: $0 build <ppt> <script.md>"; cmd_build "$2" "$3" ;;
-  *) die "未知子命令: $1（可用 extract / build）" ;;
+  revoice) [ $# -ge 3 ] || die "用法: $0 revoice <ppt> <script.md> [narration_dir]"; cmd_revoice "$2" "$3" "${4:-}" ;;
+  *) die "未知子命令: $1（可用 extract / build / revoice）" ;;
 esac

@@ -72,24 +72,29 @@ PDF="$TMP/$(basename "$PPT" .pptx).pdf"
 [ -f "$PDF" ] || die "PDF 轉換失敗"
 
 info "2/4 PDF → 逐頁 PNG（pypdfium2）..."
-"$PYTHON" - "$PDF" "$TMP" <<'PYEOF'
+RENDER_SCALE="${RENDER_SCALE:-2.0}"   # 2x ≈ 150 DPI；非標準投影片尺寸（例 11.02×6.2 吋）可調高
+"$PYTHON" - "$PDF" "$TMP" "$RENDER_SCALE" <<'PYEOF'
 import sys, pathlib
 import pypdfium2 as pdfium
 pdf_path, out_dir = sys.argv[1], pathlib.Path(sys.argv[2])
+scale = float(sys.argv[3])
 pdf = pdfium.PdfDocument(pdf_path)
 n = len(pdf)
 for i in range(n):
     page = pdf[i]
-    bitmap = page.render(scale=2.0)  # 2x ≈ 150 DPI，足夠 1080p
+    bitmap = page.render(scale=scale)  # 預設 2x ≈ 150 DPI，足夠 1080p
     bitmap.to_pil().save(out_dir / f"slide-{i+1:03d}.png")
-print(f"  渲染 {n} 頁")
+print(f"  渲染 {n} 頁（scale={scale}）")
 PYEOF
 
 info "3/4 讀取 timeline 時長 + 逐頁合成..."
-"$PYTHON" - "$NARR_DIR/timeline.json" "$TMP" "$AUDIO_DIR" <<'PYEOF'
+OUT_SIZE="${OUT_SIZE:-}"   # 例 OUT_SIZE=1920:1080（預設沿用投影片原始比例與尺寸）
+"$PYTHON" - "$NARR_DIR/timeline.json" "$TMP" "$AUDIO_DIR" "$OUT_SIZE" <<'PYEOF'
 import json, pathlib, subprocess, sys
 tl = json.load(open(sys.argv[1]))
 tmp, audio_dir = pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
+out_size = sys.argv[4].strip()
+vf = ["-vf", f"scale={out_size}:flags=lanczos"] if out_size else []
 durations = {}
 for s in tl["scenes"]:
     try:
@@ -112,7 +117,7 @@ for i in range(1, max_slide + 1):
     # -af apad 把音訊補到 -t 的長度，避免 -shortest 提前截斷造成總長少 1~2 秒
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error",
                     "-loop", "1", "-framerate", "30", "-i", str(img),
-                    "-i", str(mp3), "-af", "apad", "-t", f"{dur:.3f}",
+                    "-i", str(mp3), *vf, "-af", "apad", "-t", f"{dur:.3f}",
                     "-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage",
                     "-c:a", "aac", "-b:a", "128k", "-pix_fmt", "yuv420p",
                     str(seg)], check=True)

@@ -1,5 +1,5 @@
 """
-TW AutoTrader Python 基礎 - 第 7 週
+TW SelfSelect Python 基礎 - 第 7 週
 DSH 實戰練習
 
 這個程式不會執行任何事，它只是練習引導。
@@ -7,17 +7,17 @@ DSH 實戰練習
 """
 print("""
 ╔══════════════════════════════════════════════════════════╗
-║  第 7 週：DSH 實戰練習（4 題）                    ║
+║  第 7 週：DSH 實戰練習（4 題）                           ║
 ║                                                         ║
-║  每題請：①複製 prompt 給 DSH                       ║
+║  每題請：①複製 prompt 給 DSH                            ║
 ║          ②等 AI 做完                                    ║
-║          ③跑 backtest 驗證                              ║
+║          ③跑 backtest 驗證（在專案根目錄）               ║
 ║          ④在下方打勾確認                                ║
 ╚══════════════════════════════════════════════════════════╝
 
 【練習 1】解釋程式碼
   複製給 DSH：
-    在 strategies/bollinger.py 中，從第 27 行到第 31 行
+    在 strategies/bollinger.py 中，從第 25 行到第 31 行
     在做什麼？用白話解釋，不要用術語。
   
   驗證：你應該聽得懂它的解釋。如果聽不懂，請它
@@ -27,23 +27,26 @@ print("""
   複製給 DSH：
     在 strategies/breakout.py 中，
     在 buy_condition（第 27 行）加上條件：
-    今日成交量要大於 5 日平均成交量的 1.2 倍。
+    今日成交量要大於 5 日平均成交量的 1.5 倍。
     成交量欄位是 df['volume']，5 日均量用
     df['volume'].rolling(window=5).mean() 計算。
   
   驗證：
-    python backtest.py --strategy breakout
+    .venv/bin/python backtest.py --strategy breakout --symbol 2330
     交易次數應該比沒加過濾前少。
+  （⚠️ 這是改程式碼，改完要照專案規則把 core/version.py 的
+    APP_VERSION +1，並且由你自己手動跑 ./deploy_source.sh）
 
 【練習 3】比較參數
   複製給 DSH：
-    幫我比較 bollinger 策略用 std_dev=1.5、2.0、2.5
-    三種參數的 backtest 結果，列出交易次數、勝率、總報酬。
+    幫我比較 bollinger 策略、只回測 2330，
+    std_dev 用 1.5、2.0、2.5 三種的 backtest 結果，
+    列出交易次數、勝率、總報酬。
 
 【練習 4】解釋錯誤
   如果你執行時遇到任何錯誤訊息，
   複製給 DSH：
-    執行 python backtest.py 出現以下錯誤：
+    執行 python backtest.py --strategy bollinger 出現以下錯誤：
     [貼上錯誤訊息]
     原因是什麼？怎麼修？
 
@@ -53,4 +56,5 @@ print("""
 □ 練習 2：breakout 加上了成交量過濾，交易次數變少
 □ 練習 3：比較了三種 std_dev 的績效，找到最適合的
 □ 練習 4：我知道遇到錯誤要貼給 AI 看
+□ 額外：我知道「改 .env 參數」和「改程式碼」的差別
 """)

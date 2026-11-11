@@ -53,6 +53,8 @@ plans/ppt/~$*
 
 # 語音流水線產物（可重新產生，不進版控）
 plans/ppt/_narration_*/
+# 子目錄（例：plans/ppt/git_contain/）的產物同樣排除（2026-11-03）
+plans/ppt/**/_narration_*/
 # 配音版 pptx 一律不進版控（含子目錄；2026-11-02 裁定）
 plans/ppt/**/*-配音版.pptx
 plans/ppt/*.mp4
@@ -60,4 +62,9 @@ plans/ppt/*.mp4
 plans/ppt/**/*.mp4
 plans/ppt/*-內容.txt
 plans/ppt/*-narration-script.md
+plans/ppt/**/*-narration-script.md
 plans/ppt/*-pipeline.md
+
+# 暫存 debug 輸出（td_*.log／*.logw；2026-11-11 清理）
+td_*.log
+*.logw

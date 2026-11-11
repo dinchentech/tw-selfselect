@@ -1,5 +1,5 @@
 """
-TW AutoTrader Python 基礎 - 第 1 週
+TW SelfSelect Python 基礎 - 第 1 週
 認識變數、數字、文字
 
 這個程式會：
@@ -31,4 +31,4 @@ print(f"總報酬率：{return_rate:.2%}")
 print()
 print("--- 本週練習 ---")
 print("sigma_mult 的型態：", type(1.5))      # 應該是 <class 'float'>
-print('"vwap" 的型態：', type("vwap"))        # 應該是 <class 'str'>
+print('"auto" 的型態：', type("auto"))        # 應該是 <class 'str'>（PC_2330 的 strategy 就是這種文字）

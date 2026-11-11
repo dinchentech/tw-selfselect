@@ -1,5 +1,5 @@
 """
-TW AutoTrader Python 基礎 - 第 2 週
+TW SelfSelect Python 基礎 - 第 2 週
 資料容器：list、dict、DataFrame
 
 這個程式會：

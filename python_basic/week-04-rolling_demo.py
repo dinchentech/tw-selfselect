@@ -1,5 +1,5 @@
 """
-TW AutoTrader Python 基礎 - 第 4 週
+TW SelfSelect Python 基礎 - 第 4 週
 移動平均與 rolling window
 
 這個程式會：
