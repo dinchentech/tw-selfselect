@@ -74,9 +74,14 @@ def _build(holdings, auto_resolved=None, alloc=None, portfolio=PORTFOLIO):
 class TestHoldingsStrategyLabel(unittest.TestCase):
 
     def test_non_auto_shows_plain_strategy(self):
-        """一般策略直接顯示名稱。"""
+        """一般策略直接顯示名稱。
+
+        2026-11-09（v1.1.38）：`keep_wait` 的底線會讓 Telegram legacy Markdown 解析失敗（整則訊息
+        被降級純文字）⇒ 標籤一律過 `escape_md()`，所以報告字串裡長的是 `keep\_wait`
+        （Telegram 顯示時仍是 `keep_wait`）。
+        """
         msg = _build({"3017": 94}, alloc={"3017": {"total_buy_cost": 321930, "total_buy_shares": 94}})
-        self.assertIn("3017: 94股 | keep_wait", msg)
+        self.assertIn("3017: 94股 | keep\\_wait", msg)
 
     def test_breakout_shows_plain_strategy(self):
         msg = _build({"3008": 13}, alloc={"3008": {"total_buy_cost": 96915, "total_buy_shares": 13}})
@@ -93,7 +98,8 @@ class TestHoldingsStrategyLabel(unittest.TestCase):
             },
         )
         self.assertIn("3515: 286股 | auto→bollinger", msg)
-        self.assertIn("2006: 735股 | auto→ma_cross", msg)
+        # `ma_cross` 的底線要轉義（v1.1.38），否則整則 Telegram 訊息被 400 退回純文字
+        self.assertIn("2006: 735股 | auto→ma\\_cross", msg)
         self.assertNotIn("3515: 286股 | auto\n", msg)
 
     def test_auto_without_lock_record_shows_placeholder(self):

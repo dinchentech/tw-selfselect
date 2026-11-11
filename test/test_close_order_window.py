@@ -50,6 +50,30 @@ class TestCloseOrderWindow(unittest.TestCase):
             self.assertTrue(got, f'start={bad!r} 應回退預設 13:25（13:25 仍在窗口內）')
 
 
+    def test_closes_at_1330_by_default(self):
+        """2026-11-04：窗口**必須有上限**。
+
+        原本只判斷 `>= 13:25`，13:30 之後整天都算「可下單」⇒ 停泊／日K 單會在收盤後送出，
+        玉山回 `000017: 非該盤別盤中或預約時間`（VM 實例：13:45 那一輪停泊單被退，
+        強制重登後重試也被退）。窗口＝[13:25, 13:30]。
+        """
+        self.assertTrue(close_order_window_open(D(2026, 11, 4, 13, 25)))
+        self.assertTrue(close_order_window_open(D(2026, 11, 4, 13, 30)), '13:30（收盤當刻）仍在窗口內')
+        self.assertFalse(close_order_window_open(D(2026, 11, 4, 13, 31)), '13:31 已收盤，不得再判定可下單')
+        self.assertFalse(close_order_window_open(D(2026, 11, 4, 13, 45)),
+                         '13:45 收盤報告那一輪不得下單（000017 的來源）')
+        self.assertFalse(close_order_window_open(D(2026, 11, 4, 21, 0)), '晚上更不可能在下單窗口內')
+
+    def test_end_is_configurable(self):
+        self.assertTrue(close_order_window_open(D(2026, 11, 4, 13, 35), end='13:35'))
+        self.assertFalse(close_order_window_open(D(2026, 11, 4, 13, 36), end='13:35'))
+
+    def test_bad_end_falls_back_to_1330(self):
+        for bad in ('', 'abc', '25:99', '13', None):
+            self.assertFalse(close_order_window_open(D(2026, 11, 4, 13, 31), end=bad),
+                             f'end={bad!r} 應回退預設 13:30（13:31 不得算在窗口內）')
+
+
 class TestLoopGating(unittest.TestCase):
     """原始碼層級：日K策略的判定/下單必須被窗口閘門擋住，而 keep_wait 不受影響"""
 

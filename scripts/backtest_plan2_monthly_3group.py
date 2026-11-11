@@ -222,7 +222,24 @@ HOT_EXIT_GROUPS = set(x.strip() for x in os.getenv("HOT_EXIT_GROUPS", "normal,me
 # 這裡提供對照組：`STOP_LOSS_PCT=10` = 收盤價 ≤ 成本 ×(1−10%) 即全部出場（日頻收盤口徑，與本檔一致）。
 # 規則本體在 core/backtest_rules.py（純函式、可獨立測試，不必匯入本檔的重型快取載入）。
 from core.backtest_rules import (signal_strategy, stop_hit, stop_loss_env, leverage_for_target,  # noqa: E402
-                                 above_ma200)
+                                 above_ma200, caliber_tag)
+
+
+def _caliber_suffix() -> str:
+    """結果檔名的口徑後綴（`results/*.json` 與 `daily_*`／`exposure_*` CSV 共用）。
+
+    2026-11-05：加上 `strat_mode`（`group` 帶 `_group`、`form` 不加註）⇒ 輪替與實盤口徑
+    跑同一窗口不會再互相覆蓋（當時靠手動複製到 `TMP/` 才救回檔案）。規則本體在
+    `core.backtest_rules.caliber_tag()`（可單元測試）。
+    """
+    return caliber_tag(EXEC, dca=DCA_MONTHLY, lock_at=LOCK_AT, rebal_months=REBAL_MONTHS,
+                       top_n=TOP_N, fixed_n=len(POOL_FIXED) if POOL_FIXED else 0,
+                       leverage=LEVERAGE, scale_to_util=SCALE_TO_UTIL,
+                       market_filter=MARKET_FILTER, mf_window=MF_WINDOW,
+                       idle_cash_asset=IDLE_CASH_ASSET, fill_mode=FILL_MODE,
+                       scoring_model=SCORING_MODEL, factor_revenue=FACTOR_REVENUE,
+                       max_per_sector=MAX_PER_SECTOR, delisted=include_delisted(),
+                       pool_n=POOL_N, strat_mode=STRAT_MODE)
 
 STOP_LOSS_PCT = stop_loss_env("STOP_LOSS_PCT", 0.0)
 _MF_BLOCKED = [0]      # 大盤年線濾網累計擋下的買進次數（每次跑回測重設）
@@ -1360,21 +1377,7 @@ def main():
         #   （2026-09-18 修法）。
         # 檔名含口徑（EXEC／DCA／鎖定時點）——2026-09-22 補：只帶窗口的話，
         #   同窗口的 signal 與 immediate 會互相覆蓋（實際發生：混合分析差點混到 A 的曲線）。
-        _suffix = f"{EXEC}" + (f"_dca{DCA_MONTHLY:g}" if DCA_MONTHLY > 0 else "") \
-                  + ("" if LOCK_AT == "fill" else f"_{LOCK_AT}") \
-                  + (f"_rebal{REBAL_MONTHS}" if REBAL_MONTHS > 1 else "") \
-                  + (f"_top{TOP_N}" if TOP_N != 5 else "") \
-                  + (f"_fixed{len(POOL_FIXED)}" if POOL_FIXED else "") \
-                  + (f"_lev{LEVERAGE:g}" if LEVERAGE != 1 else "") \
-                  + (f"_scale{SCALE_TO_UTIL:g}" if SCALE_TO_UTIL > 0 else "") \
-                  + (f"_mf{MF_WINDOW}" if MARKET_FILTER else "") \
-                  + (f"_park{IDLE_CASH_ASSET}" if IDLE_CASH_ASSET else "") \
-                  + (f"_fill{FILL_MODE}" if FILL_MODE != "proportional" else "") \
-                   + (f"_score{SCORING_MODEL}" if SCORING_MODEL != "legacy" else "") \
-                   + ("_norev" if (SCORING_MODEL == "zscore" and not FACTOR_REVENUE) else "") \
-                   + (f"_sec{MAX_PER_SECTOR}" if MAX_PER_SECTOR > 0 else "") \
-                   + ("" if include_delisted() else "_surv") \
-                   + (f"_pool{POOL_N}" if POOL_N != 50 else "")
+        _suffix = _caliber_suffix()
         curve.to_csv(f"results/daily_{gkey}_{START}_{END}_{_suffix}.csv")
         # 每日曝險明細（equity / 持股市值 / 已分配額度）——「閒置資金押 0050」的合成需要它
         try:
@@ -1385,7 +1388,8 @@ def main():
         except Exception as _e:
             print(f"⚠️ 曝險明細匯出失敗（不影響回測）：{_e}")
         # 舊檔名（不含口徑）只為「已文件化的 canonical 基線」保留：2015-2025 + signal + fill + 單筆
-        if (START, END) == ("2015-01-01", "2025-12-31") and _suffix == "signal":
+        # 2026-11-05：group 口徑的後綴多了 `_group` ⇒ 舊別名要比對「去掉它」的結果
+        if (START, END) == ("2015-01-01", "2025-12-31") and _suffix.removesuffix("_group") == "signal":
             curve.to_csv(f"results/daily_{gkey}_{_mode}.csv")
         print(f"\n[{meta['label']}] 投入 NT${base:,.0f} → 終值 NT${res['final']:,.0f}  "
               f"總報酬 {total:+.2%} 年化 {ann:+.2%} MDD {p.get('mdd', float('nan')):.2%} "
@@ -1452,6 +1456,19 @@ def main():
            "scoring_model": SCORING_MODEL, "factor_revenue": FACTOR_REVENUE,
            "max_per_sector": MAX_PER_SECTOR,
            "pool_fixed": POOL_FIXED or None,
+           # ── 選股口徑旋鈕（2026-11-05 補進檔頭）──
+           # 為什麼（實際踩到）：拿兩份 `results/*.json` 比對「是不是同一批選股」時，
+           #   檔頭沒有這幾個鍵 ⇒ 看不到 `Z_OVERHEAT`（選股端過熱過濾，實測少 10.4% 名單）、
+           #   `IMM_OVERHEAT`／`ENTRY_OVERHEAT`（買進當下過熱閘門）與實際生效的 `preset`。
+           #   2026-11-05 比對 group／form 兩次執行時，只能重跑一組控制變因的實驗才敢下結論。
+           #   會改變「選哪 5 檔／買不買得進去」的旋鈕一律寫進檔頭（量測用的 LEVERAGE 等不在此列）。
+           "preset": _PRESET,
+           "z_overheat": Z_OVERHEAT, "imm_overheat": IMM_OVERHEAT,
+           "entry_overheat": ENTRY_OVERHEAT,
+           "oh_rsi_th": OH_RSI_TH, "oh_dist_win": OH_DIST_WIN, "oh_dist_th": OH_DIST_TH,
+           "oh_entry_mode": OH_ENTRY_MODE,
+           "pick_cooldown_months": PICK_COOLDOWN_MONTHS, "prerank_r63_pct": PRERANK_R63_PCT,
+           "w_dist": W_DIST, "nonmom_slots": NONMOM_SLOTS,
            "leverage": LEVERAGE, "scale_to_util": SCALE_TO_UTIL, "margin_rate": MARGIN_RATE,
            "market_filter": MARKET_FILTER, "mf_window": MF_WINDOW, "mf_source": MF_SOURCE,
            "idle_cash_asset": IDLE_CASH_ASSET or None, "park_cost": PARK_COST,
@@ -1466,21 +1483,7 @@ def main():
         _json.dump(out, f, ensure_ascii=False, indent=2)
     # 2026-09-21：另存**窗口／口徑專屬**檔名，避免「同一個檔名被不同窗口覆蓋」導致事後無法覆核
     #   （`plan2_monthly_3group.json` 保留為最新一次執行的通用檔）。
-    _tag = f"{START}_{END}_{EXEC}" + (f"_dca{DCA_MONTHLY:g}" if DCA_MONTHLY > 0 else "") \
-           + ("" if LOCK_AT == "fill" else f"_{LOCK_AT}") \
-           + (f"_rebal{REBAL_MONTHS}" if REBAL_MONTHS > 1 else "") \
-           + (f"_top{TOP_N}" if TOP_N != 5 else "") \
-           + (f"_fixed{len(POOL_FIXED)}" if POOL_FIXED else "") \
-           + (f"_lev{LEVERAGE:g}" if LEVERAGE != 1 else "") \
-           + (f"_scale{SCALE_TO_UTIL:g}" if SCALE_TO_UTIL > 0 else "") \
-           + (f"_mf{MF_WINDOW}" if MARKET_FILTER else "") \
-           + (f"_park{IDLE_CASH_ASSET}" if IDLE_CASH_ASSET else "") \
-           + (f"_fill{FILL_MODE}" if FILL_MODE != "proportional" else "") \
-           + (f"_score{SCORING_MODEL}" if SCORING_MODEL != "legacy" else "") \
-           + ("_norev" if (SCORING_MODEL == "zscore" and not FACTOR_REVENUE) else "") \
-           + (f"_sec{MAX_PER_SECTOR}" if MAX_PER_SECTOR > 0 else "") \
-           + ("" if include_delisted() else "_surv") \
-           + (f"_pool{POOL_N}" if POOL_N != 50 else "")
+    _tag = f"{START}_{END}_{_caliber_suffix()}"
     _out_path = f"results/plan2_monthly_3group_{_tag}.json"
     with open(_out_path, "w", encoding="utf-8") as f:
         _json.dump(out, f, ensure_ascii=False, indent=2)

@@ -80,14 +80,23 @@ class CloseOrderFromEnvTest(unittest.TestCase):
 class CloseOrderWindowBoundsTest(unittest.TestCase):
     """窗口本身只有起點（>= 13:25）；收盤 13:30 是硬邊界，這裡把語義釘住。"""
 
-    def test_window_opens_at_1325_and_has_no_upper_bound(self):
+    def test_window_is_bounded_1325_to_1330(self):
+        """窗口＝[13:25, 13:30]。
+
+        🔧 **2026-11-04 更正**：本測試原本叫 `test_window_opens_at_1325_and_has_no_upper_bound`，
+        並斷言 13:31 仍在窗口內（= 刻意沒有上限）。實盤證明那是錯的：
+        沒有上限 ⇒ 13:45 收盤報告那一輪停泊單照樣送出 ⇒ 玉山 `000017: 非該盤別盤中或預約時間`
+        （強制重登後重試同樣被退）。改成有上限，並保留 13:30 那一刻仍在窗口內。
+        """
         # 明確帶 start：本測試驗「窗口語義」，不受其他測試改動模組常數影響
         from datetime import datetime
         from core.live_utils import close_order_window_open
         self.assertFalse(close_order_window_open(datetime(2026, 10, 19, 13, 24), start='13:25'))
         self.assertTrue(close_order_window_open(datetime(2026, 10, 19, 13, 25), start='13:25'))
         self.assertTrue(close_order_window_open(datetime(2026, 10, 19, 13, 29), start='13:25'))
-        self.assertTrue(close_order_window_open(datetime(2026, 10, 19, 13, 31), start='13:25'))
+        self.assertTrue(close_order_window_open(datetime(2026, 10, 19, 13, 30), start='13:25'))
+        self.assertFalse(close_order_window_open(datetime(2026, 10, 19, 13, 31), start='13:25'),
+                         '13:31 已收盤 ⇒ 不得再判定可下單（000017 的來源）')
 
 
 class QuoteTimeoutBudgetTest(unittest.TestCase):

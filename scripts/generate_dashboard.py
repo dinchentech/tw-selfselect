@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from collections import defaultdict
 from datetime import datetime
+from urllib.parse import quote
 
 # 確保可從 container(/app) 或 VM repo 根執行：sys.path[0]=scripts/ → 加專案根
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -20,6 +21,10 @@ STOCK_ALLOC_PATH = Path("logs/stock_allocation.json")
 
 from core.version import APP_VERSION
 CHART_CDN = "https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"
+#: GitHub Pages 站台 —— 策略動畫頁統一放在 repo 的 `docs/`（2026-11-03 起連結一律帶 `/docs/`）。
+#: 發佈時由 `scripts/vm/publish_dashboard.sh` 從發佈分支把 `docs/*.html` 同步到 gh-pages 的 `docs/`。
+#: 本機測試或換站台時可用 `DASHBOARD_PAGES_BASE` 覆寫。
+PAGES_BASE = os.getenv("DASHBOARD_PAGES_BASE", "https://dinchentech.github.io/tw-selfselect").rstrip("/")
 
 # 這支腳本會用 `docker exec` 在容器裡跑，容器啟動時的 .env 可能是舊的
 # → 讀取「策略」欄需要的 PC_ 條目之前，先用 override=True 重讀 .env（見 test_tools_load_env_override）。
@@ -699,6 +704,8 @@ def build_html(trades_df: pd.DataFrame) -> str:
   </div>"""
 
     # ─── 策略動畫連結（五策略）───
+    # 2026-11-03：動畫頁已移到 repo 的 docs/ ⇒ 連結改成 {PAGES_BASE}/docs/<檔名>（絕對網址，
+    # 本機開 logs/dashboard.html 時也點得開）。檔名含中文要 URL 編碼。
     STRATEGY_VIDEOS = [
         ("布林通道反轉", "bollinger-animation.html"),
         ("VWAP 偏離反轉", "vwap-animation.html"),
@@ -707,7 +714,8 @@ def build_html(trades_df: pd.DataFrame) -> str:
         ("Keep & Wait 低接", "keep_wait策略說明.html"),
     ]
     video_links = "".join(
-        f'<a href="{fname}" target="_blank" rel="noopener" class="strategy-link">{name}</a>'
+        f'<a href="{PAGES_BASE}/docs/{quote(fname)}" target="_blank" rel="noopener" '
+        f'class="strategy-link">{name}</a>'
         for name, fname in STRATEGY_VIDEOS
     )
 

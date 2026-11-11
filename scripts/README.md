@@ -34,6 +34,8 @@
 | `reconcile_broker_books.py` | 與券商庫存對帳（**真錢上線前必跑**）|
 | `check_holdings_vs_env.py` | `.env` 名單 vs 實際持股（找出孤兒部位）|
 | `void_untracked_buys.py` | 作廢「只寫進 CSV、沒進 holdings」的幽靈買進列 |
+| `snapshot_broker.py` | 每日把券商原始回傳（庫存／成交／委託／餘額／**未交割**）落地成 `logs/broker_snapshot_<日期>.json`（唯讀）|
+| `broker_shortfall_repair.py` | 用**當天落地的快照**補「部分成交」的帳（預設 dry-run；`--apply` 才寫，先備份）|
 | `migrate_performance_csv_schema.py` | `performance.csv` 舊 schema（6/7 欄）→ 8 欄 |
 
 ## 回測與研究

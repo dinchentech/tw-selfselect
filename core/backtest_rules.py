@@ -180,6 +180,42 @@ def strategy_after_exit(locked, shares):
         return locked
 
 
+def caliber_tag(exec_mode, *, dca=0.0, lock_at="fill", rebal_months=1, top_n=5, fixed_n=0,
+                leverage=1.0, scale_to_util=0.0, market_filter=False, mf_window=200,
+                idle_cash_asset="", fill_mode="proportional", scoring_model="legacy",
+                factor_revenue=True, max_per_sector=0, delisted=True, pool_n=50,
+                strat_mode="form") -> str:
+    """`results/*.json`、`daily_*`／`exposure_*` CSV 的**口徑後綴**（不含窗口、前綴、副檔名）。
+
+    只把「非基準值」的旋鈕寫進檔名，讓同一窗口的不同口徑不會互相覆蓋；基準值
+    （`form`／legacy 評分／池 50／TOP5／`fill`／不加槓桿／`proportional`…）不加註，避免檔名爆炸。
+
+    ⚠️ 2026-11-05（實際踩到）：`strat_mode` 原本**不在**後綴裡 ⇒ `group`（輪替四策略）
+    與 `form`（實盤 auto 路徑）跑同一窗口會**覆蓋同一個檔案**（`results/*.json` 與
+    `exposure_*.csv` 都是）。當時要比對兩份 JSON 得先手動複製到 `TMP/` 才救得回來。
+    ⇒ 現在 `group`（非實盤路徑）帶 `_group`；`form`（實盤口徑，文件引用的基準）**維持不加註**，
+    既有文件名不變。
+    """
+    tag = str(exec_mode) \
+        + (f"_dca{dca:g}" if dca and dca > 0 else "") \
+        + ("" if lock_at == "fill" else f"_{lock_at}") \
+        + (f"_rebal{rebal_months}" if rebal_months > 1 else "") \
+        + (f"_top{top_n}" if top_n != 5 else "") \
+        + (f"_fixed{fixed_n}" if fixed_n else "") \
+        + (f"_lev{leverage:g}" if leverage != 1 else "") \
+        + (f"_scale{scale_to_util:g}" if scale_to_util and scale_to_util > 0 else "") \
+        + (f"_mf{mf_window}" if market_filter else "") \
+        + (f"_park{idle_cash_asset}" if idle_cash_asset else "") \
+        + (f"_fill{fill_mode}" if fill_mode != "proportional" else "") \
+        + (f"_score{scoring_model}" if scoring_model != "legacy" else "") \
+        + ("_norev" if (scoring_model == "zscore" and not factor_revenue) else "") \
+        + (f"_sec{max_per_sector}" if max_per_sector > 0 else "") \
+        + ("" if delisted else "_surv") \
+        + (f"_pool{pool_n}" if pool_n != 50 else "") \
+        + ("" if str(strat_mode) == "form" else f"_{strat_mode}")
+    return tag
+
+
 # ── 環境變數覆寫保護（2026-10-05 事故後新增）─────────────────────────────
 # 事故：回測腳本在讀參數**之前**就
 #   `import stock_selector_grid`，而後者在 **import 時**執行 `load_dotenv(override=True)`

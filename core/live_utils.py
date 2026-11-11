@@ -306,6 +306,9 @@ def sell_with_fill_check(broker, symbol, shares, notified, today_str, notify_fn,
     （實測 6505：上層取到 99.9、實際送單 99.60，帳本多記約 NT$600）。
     記帳價請走 `order_fill_price(order_ret, 舊價)`。
     未成交 → 警示且回傳 0；部分成交 → 回傳實際數；無法確認 → 視為全成交。
+    ⚠️ 2026-11-06：連「無法確認 → 全成交」這條出口也要對帳股數——券商整股規則會把
+    `shares` 改掉（餘數 ≥500 進位、<500 捨去），賣 1,584 股可能實際只賣 1,000 股
+    ⇒ 一律回傳 `reconcile_order_qty(shares, order_ret)`（同買進側口徑）。
     """
     order_ret = broker.place_order(symbol, "sell", shares)
     filled = resolve_fill(broker, symbol, "sell", order_ret, shares)
@@ -316,7 +319,10 @@ def sell_with_fill_check(broker, symbol, shares, notified, today_str, notify_fn,
     if filled is not None and filled < shares:
         print(f"⚠️ {symbol} {action_label}部分成交 {filled}/{shares} 股，餘額續留")
         return filled, notified, order_ret
-    return shares, notified, order_ret
+    done = reconcile_order_qty(shares, order_ret)
+    if int(done) != int(shares):
+        print(f"⚠️ {symbol} {action_label}記帳股數依實際送單：{int(shares)} → {int(done)} 股")
+    return done, notified, order_ret
 
 
 
@@ -515,6 +521,11 @@ def close_report_window_open(now: datetime) -> bool:
 # ⚠️ 2026-10-19：原本是寫死的字串，但 `.env.example.txt` 一直寫成可用 `CLOSE_ORDER_FROM` 調整
 #    ⇒ 改了沒反應。這裡改成讀 env（預設仍 13:25，行為不變）。
 CLOSE_ORDER_FROM = os.getenv('CLOSE_ORDER_FROM', '13:25')
+# ⚠️ 2026-11-04：原本這個窗口**只有下限、沒有上限** ⇒ 13:25 之後「整段下午都算可以下單」，
+#    收盤後（13:45 收盤報告那一輪）仍會走到下單分支 ⇒ 玉山回 `000017: 非該盤別盤中或預約時間`
+#    （VM 實例：停泊 0050 在 13:45 送零股單被退，強制重登後重試同樣被退）。
+#    加上上限（預設 13:30 收盤）＝窗口是 [13:25, 13:30]。
+CLOSE_ORDER_TO = os.getenv('CLOSE_ORDER_TO', '13:30')
 
 
 def _parse_hhmm(value, fallback=(13, 25)):
@@ -528,13 +539,20 @@ def _parse_hhmm(value, fallback=(13, 25)):
     return fallback
 
 
-def close_order_window_open(now: datetime, start=None) -> bool:
-    """日K策略是否已進入「收盤前下單窗口」（預設 13:25 起；交易時段到 13:30）。
+def close_order_window_open(now: datetime, start=None, end=None) -> bool:
+    """日K策略是否在「收盤前下單窗口」內（預設 **13:25 ≤ t ≤ 13:30**）。
 
-    start 可覆寫（'HH:MM'，測試/調參用）；設定值壞掉時回退預設 13:25，**不拋例外**
-    （不可因一個設定值讓主迴圈停擺）。
+    start／end 可覆寫（'HH:MM'，測試/調參用）；設定值壞掉時回退預設（13:25／13:30），
+    **不拋例外**（不可因一個設定值讓主迴圈停擺）。
+
+    ⚠️ 上限是 2026-11-04 補的（原本只有下限）。沒有上限時 13:30 之後仍判定為「可下單」，
+    停泊與日K訂單會在收盤後送出 ⇒ 券商 000017。若真的需要收盤後補單，
+    請調 `CLOSE_ORDER_TO`，不要靠「沒有上限」。
     """
-    return (now.hour, now.minute) >= _parse_hhmm(start if start is not None else CLOSE_ORDER_FROM)
+    t = (now.hour, now.minute)
+    lo = _parse_hhmm(start if start is not None else CLOSE_ORDER_FROM, (13, 25))
+    hi = _parse_hhmm(end if end is not None else CLOSE_ORDER_TO, (13, 30))
+    return lo <= t <= hi
 
 
 _CALENDAR = None

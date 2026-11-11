@@ -1,12 +1,17 @@
 # strategies/ma_cross.py
 import pandas as pd
 
+from strategies.indicators import atr as _atr
+
 def ma_cross_strategy(df: pd.DataFrame, fast_period=9, slow_period=21, atr_period=14, atr_threshold=0.005) -> pd.DataFrame:
     """
     均線交叉策略 + ATR 波動度過濾：
     - 當快線（MA9）上穿慢線（MA21）且 ATR 波動足夠 → 買進
     - 當快線下穿慢線且 ATR 波動足夠 → 賣出
     - ATR 波動不足時跳過訊號，避免盤整期假訊號
+
+    ATR 口徑：`strategies/indicators.atr()`（Wilder TR 含跳空 ＋ Wilder 平滑）；
+    前 `atr_period−1` 根為 NaN ⇒ 該段不發訊號。
     """
     df = df.copy()
     
@@ -14,14 +19,8 @@ def ma_cross_strategy(df: pd.DataFrame, fast_period=9, slow_period=21, atr_perio
     df['MA_Fast'] = df['close'].rolling(window=fast_period, min_periods=1).mean()
     df['MA_Slow'] = df['close'].rolling(window=slow_period, min_periods=1).mean()
     
-    # 計算 ATR（平均真實波動幅度）
-    prev_close = df['close'].shift(1)
-    tr = pd.concat([
-        df['high'] - df['low'],
-        (df['high'] - prev_close).abs(),
-        (df['low'] - prev_close).abs()
-    ], axis=1).max(axis=1)
-    df['ATR'] = tr.rolling(window=atr_period, min_periods=1).mean()
+    # 計算 ATR（平均真實波動幅度）——口徑見 strategies/indicators.py
+    df['ATR'] = _atr(df, atr_period)
     
     # 訊號：1=買, -1=賣
     df['signal'] = 0

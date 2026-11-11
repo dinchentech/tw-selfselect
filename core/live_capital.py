@@ -5,6 +5,9 @@ import json
 from pathlib import Path
 from datetime import date
 
+# 2026-11-09：Telegram legacy Markdown 轉義（動態內容一律先過 escape_md）
+from utils.telegram import escape_md
+
 
 def read_capital_file(filepath: str = "capital.txt") -> list:
     """
@@ -63,8 +66,8 @@ def check_capital_injections(
         source = "外部加碼" if amount > 0 else "資金提領"
         msg = (
             f"💰 *資金變動*\n"
-            f"日期: {date_str}\n"
-            f"{source}: NT${amount:,.0f}\n"
+            f"日期: {escape_md(date_str)}\n"
+            f"{escape_md(source)}: NT${amount:,.0f}\n"
             f"資本: NT${old_capital:,.0f} → NT${total_capital:,.0f}"
         )
         send_telegram_message(msg)
@@ -91,7 +94,7 @@ def check_capital_injections(
                     rm.log_trade(symbol, 1, px, buy_shares)
                     holdings[symbol] = holdings.get(symbol, 0) + buy_shares
                     save_holdings(holdings)
-                    send_telegram_message(f"📥 *{symbol}* keep_wait 加碼 {buy_shares} 股 @ {px:.0f}")
+                    send_telegram_message(rf"📥 *{escape_md(symbol)}* keep\_wait 加碼 {buy_shares} 股 @ {px:.0f}")
                 except Exception as e:
                     print(f"❌ {symbol} keep_wait 加碼失敗: {e}")
 
@@ -139,7 +142,8 @@ def execute_keep_wait_on_profit_roll(
         rm.log_trade(symbol, 1, px, buy_shares)
         holdings[symbol] = holdings.get(symbol, 0) + buy_shares
         save_holdings(holdings)
-        msg = f"📥 *{symbol}* keep_wait 獲利滾入加碼 {buy_shares} 股 @ {px:.0f}（獲利 NT${profit_amount:,.0f}）"
+        msg = (rf"📥 *{escape_md(symbol)}* keep\_wait 獲利滾入加碼 {buy_shares} 股 @ {px:.0f}"
+               f"（獲利 NT${profit_amount:,.0f}）")
         send_telegram_message(msg)
         print(f"📥 {symbol} keep_wait 獲利滾入加碼 {buy_shares} 股 @ {px:.0f}")
     except Exception as e:

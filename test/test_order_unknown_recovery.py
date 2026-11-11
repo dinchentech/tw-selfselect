@@ -174,11 +174,16 @@ class WiringTest(unittest.TestCase):
 
     def test_all_bookkeeping_paths_use_sent_price(self):
         """2026-11-03：孤兒清倉／加碼／補足／停泊 都用實際送單價記帳（不只策略訊號那條）。"""
-        self.assertIn('return shares, notified, order_ret', self.live_utils,
+        # 2026-11-06：第三個回傳值仍是 order_ret，但股數改成 `done`
+        # （＝reconcile_order_qty 對帳後的實際送單股數），故不再是字面 `return shares, …`。
+        self.assertIn('return done, notified, order_ret', self.live_utils,
                       'sell_with_fill_check() 要回傳 order_ret（孤兒清倉靠它取 sent_price）')
+        self.assertIn('done = reconcile_order_qty(shares, order_ret)', self.live_utils,
+                      'sell_with_fill_check() 的股數要對帳（券商整股規則會改股數）')
         self.assertIn('def book_price(', self.main)
+        # 2026-11-09（v1.1.36）：停泊釋出的賣單送出的股數是對齊整股後的 `_send`（不是帳面 `sh`）。
         for call in ('sell_with_fill_check(', 'place_buy(symbol, buy_shares',
-                     "place_buy(symbol, _need", "broker.place_order(sym, 'sell', sh)"):
+                     "place_buy(symbol, _need", "broker.place_order(sym, 'sell', _send)"):
             self.assertIn(call, self.main)
         for site in ('book_price(_order_ret, old_px', 'book_price(_kw_ret, px',
                      'book_price(_order_ret, px', 'book_price(ret, px'):

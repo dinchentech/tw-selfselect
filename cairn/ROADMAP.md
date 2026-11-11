@@ -9,6 +9,10 @@
 ## 里程碑
 
 - [ ] **玉山舊部位清理（2026-10-27 使用者交代）**：VM 本機三本帳已清空（`holdings.json` 不存在、`performance.csv` 只有表頭、稽核 `三本帳一致`），但**玉山（模擬帳）那邊可能還留著之前交易留下的持股**。本機看不到 ⇒ 收盤後（避免與主程式的 SDK session 打架）跑 `scripts/reconcile_broker_books.py` 取得券商庫存，再決定：真存在就賣掉或補記進帳本，不存在就走 `scripts/void_untracked_buys.py` 作廢。
+  **2026-11-05 進展**：v1.1.29 已部署（指紋 `2fbfbd8a` 遠近一致）⇒ 每日券商原始快照（`scripts/snapshot_broker.py`）與收盤成交對帳（`core/broker_sync.py`）在線。
+  **同日首跑結果（唯讀）**：券商只回 1 檔，另 3 檔（2408／2603／2609）未涵蓋 ⇒ **無法證明券商端沒有舊部位**，
+  模擬環境 `get_inventories()` 只回當日成交（見 `cairn/total-assets-reconciliation.md`）。
+  ⇒ 本里程碑**驗收方式**：以玉山 App／月對帳單的完整庫存為準（SDK 不可得），再回來跑 `void_untracked_buys.py`／補記。
 - [ ] 三本帳（`performance.csv`／`holdings.json`／`stock_allocation.json`）在實盤機上恆等，且與券商庫存逐檔一致
 - [ ] 快取汙染零容忍：source 端與消費端都擋掉不可用列，且 `CACHE_SCHEMA_VERSION` 升級流程寫成 runbook
 - [ ] 切 `real` 的狀態檔清空演練（`scripts/reset_paper_trading_vm.py`）實際跑過一次並留下紀錄
@@ -23,6 +27,9 @@
   最佳格換任一旋鈕就掉 382~959pp ⇒ 判定為「**尖峰不是平台**」，超額報酬仍有相當比例是選擇偏誤。
   尚待②固定並記錄資料快照（月營收 515→645 檔使同一格 +1070.5%→+1323.6%）③上櫃（TPEX）下市股與 2015 前資料。
   （`results/walk_forward/wf_presets_2020_2025.md`、`results/backtest_delisted_universe.md`）
+  **④2026-11-04 補：近窗反向證據**——同一實盤口徑改 2022-01-01～2026-10-23 窗口，池 150 只有
+  +130.93%／MDD −43.09%／夏普 0.79，池 100 是 +283.07%／−33.37%／1.18（且池 150 多觸發 5 次股災防護）
+  ⇒ 池大小的優勢**窗口依賴**，暫不改預設（`cairn/selection-mix-and-parking.md`）。
 - [ ] **AI 選股的去留決策**（不阻塞上線）：先補統計限制（池 50、互不重疊窗口、計交易成本），再決定「只當參考名單」或「維持並行記錄」
 - [ ] 教材一致性（非阻塞）：其餘 tab 排版頁換真表格、W1 S13 螢光筆差異（`cairn/teaching-material-pipeline.md`）
 

@@ -2,7 +2,7 @@
 core/config_loader.py — 共用設定載入器（V1.11）
 
 從 PC_<代號> 環境變數載入個股策略設定 (JSON 格式)，
-供 live_trader_multi.py 及所有回測檔案共用。
+供 selfselect_trader.py 及所有回測檔案共用。
 """
 import os
 import json
@@ -25,7 +25,7 @@ STRATEGY_PARAM_KEYS = {
 
 # 2026-09-21 移除死碼：KEEP_WAIT_PARAM_KEYS 與 get_keep_wait_params()
 #   （全 repo 無呼叫者；simulate_portfolio.py 用自己的 KEEP_WAIT_PARAMS 常數，
-#     live_trader_multi.py 直接讀 cfg.get('initial_shares')）
+#     selfselect_trader.py 直接讀 cfg.get('initial_shares')）
 
 
 def load_portfolio_config() -> dict:

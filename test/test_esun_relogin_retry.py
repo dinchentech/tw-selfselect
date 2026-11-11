@@ -143,5 +143,47 @@ class TestEsunReloginRetry(unittest.TestCase):
         self.assertIn("current price", res["error"])
 
 
+class TestNonRetryableOrderError(unittest.TestCase):
+    """2026-11-04：時間／盤別錯誤（000017）不做「強制重登＋重試」。
+
+    重登不會改變「現在幾點」，重試必再失敗（VM 實例：13:45 停泊單被退 → 重登 → 重試 → 再被退）。
+    """
+
+    def _provider_with_error(self, msg):
+        p = _make_provider(fail_times=99)
+
+        def _raise(order):
+            p._trade_sdk.calls += 1
+            raise RuntimeError(msg)
+
+        p._trade_sdk.place_order = _raise
+        return p
+
+    def test_000017_does_not_relogin_and_does_not_retry(self):
+        p = self._provider_with_error("000017: 非該盤別盤中或預約時間，停止收單")
+        with mock.patch("time.sleep", return_value=None):
+            res = p.place_order("0050", "BUY", 282)
+        self.assertEqual(p.relogin_calls, 0, "時間錯不該重登")
+        self.assertEqual(p._trade_sdk.calls, 1, "時間錯不該重試")
+        self.assertIn("error", res)
+        self.assertIn("000017", res["error"])
+
+    def test_session_error_still_relogins(self):
+        """其餘錯誤（session 失效）仍要維持「重登＋重試一次」的原行為。"""
+        p = self._provider_with_error("A00002: response parse Error")
+        with mock.patch("time.sleep", return_value=None):
+            res = p.place_order("3515", "BUY", 1000)
+        self.assertEqual(p.relogin_calls, 1)
+        self.assertEqual(p._trade_sdk.calls, 2)
+        self.assertIn("error", res)
+
+    def test_helper_classification(self):
+        from data.esun_provider import is_non_retryable_order_error
+        self.assertTrue(is_non_retryable_order_error("000017: 非該盤別盤中或預約時間，停止收單"))
+        self.assertFalse(is_non_retryable_order_error("A00002: response parse Error"))
+        self.assertFalse(is_non_retryable_order_error(None))
+        self.assertFalse(is_non_retryable_order_error(""))
+
+
 if __name__ == "__main__":
     unittest.main()

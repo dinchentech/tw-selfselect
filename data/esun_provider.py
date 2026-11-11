@@ -34,6 +34,10 @@ from esun_trade.sdk import SDK as EsunTrade
 from esun_trade.order import OrderObject
 from esun_trade.constant import Action, APCode, PriceFlag, Trade, BSFlag
 
+# 整股（board lot）規則的單一出處（2026-11-09，v1.1.36）——見 core/lots.py 的事故說明
+from core.lots import LOT, ODD_LOT_MAX, board_lot_qty
+from utils.telegram import escape_md
+
 # Default path relative to project root
 _DEFAULT_INI = "esun_sdk/config.simulation.ini"
 
@@ -45,6 +49,24 @@ PLACE_ORDER_TIMEOUT = int(os.getenv("ESUN_PLACE_ORDER_TIMEOUT", "30"))
 # "ESUN_DEBUG=true" in command line to see what happened」。
 # 這裡只補上核心看不到的「我方送出的內容」與完整 traceback。
 ESUN_DEBUG = os.getenv("ESUN_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
+
+# 報價重試次數（逾時／斷線才重試；其他錯誤不重試）。2026-11-04：每次重試之間退避 0.4 秒，
+# 讓同一檔連續逾時不會把 13:25–13:30 的下單窗口全部吃掉。
+NET_QUOTE_RETRIES = max(1, int(os.getenv("NET_QUOTE_RETRIES", "2")))
+NET_QUOTE_BACKOFF_SEC = float(os.getenv("NET_QUOTE_BACKOFF_SEC", "0.4"))
+
+# 「重登重試也救不回來」的下單錯誤：時間／盤別類。含這些字樣就不做強制重登重試
+# （2026-11-04 VM：13:45 停泊單被退 000017，重登後重試必再失敗，只是多打一次 API）。
+NON_RETRYABLE_ORDER_ERRORS = (
+    "000017",                    # 非該盤別盤中或預約時間，停止收單
+    "非該盤別盤中或預約時間",
+)
+
+
+def is_non_retryable_order_error(err) -> bool:
+    """下單錯誤是否屬於「重試無用」（時間／盤別錯）。None／空字串 → False。"""
+    s = str(err or "")
+    return any(tok in s for tok in NON_RETRYABLE_ORDER_ERRORS)
 
 
 def _resolve_cert_path(cfg):
@@ -230,9 +252,12 @@ class EsunProvider:
                     bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
                     chat_id = os.getenv("TELEGRAM_CHAT_ID")
                     if bot_token and chat_id:
+                        # 2026-11-09：錯誤字串是動態內容（可能含 `_`／`*`）⇒ 先轉義，
+                        #   否則 legacy Markdown 解析失敗、整則 400（這裡沒有降級重送）
+                        _err_md = escape_md(error_msg)
                         msg = (
                             f"⚠️ *玉山 API 維護中*\n\n"
-                            f"錯誤: {error_msg}\n\n"
+                            f"錯誤: {_err_md}\n\n"
                             f"維護時間: 08:00-13:00\n"
                             f"程式將在 3 分鐘後退出\n"
                             f"請避開維護時間再重啟\n\n"
@@ -336,13 +361,18 @@ class EsunProvider:
         if not self._ensure_available():
             return 0.0
         self.login()
-        for _attempt in (1, 2):
+        for _attempt in range(1, NET_QUOTE_RETRIES + 1):
             try:
                 q = self._marketdata.rest_client.stock.intraday.quote(symbol=symbol)
                 return float(q.get("lastPrice", 0))
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-                if _attempt == 1:
-                    print(f"⚠️ {symbol} 報價逾時／斷線，重試一次（{e}）")
+                if _attempt < NET_QUOTE_RETRIES:
+                    print(f"⚠️ {symbol} 報價逾時／斷線，第 {_attempt}/{NET_QUOTE_RETRIES - 1} 次重試"
+                          f"（退避 {NET_QUOTE_BACKOFF_SEC}s，{e}）")
+                    try:
+                        time.sleep(NET_QUOTE_BACKOFF_SEC)
+                    except Exception:
+                        pass
                     continue
                 print(f"❌ E.Sun get_current_price error: {e}")
                 return 0.0
@@ -434,24 +464,25 @@ class EsunProvider:
                 result_holder["sent_price"] = float(price)
 
                 # 999 股以下走盤中零股，以上走整股
-                if qty <= 999:
+                if qty <= ODD_LOT_MAX:
                     ap_code = APCode.IntradayOdd
                     order_type = "盤中零股"
                 else:
                     ap_code = APCode.Common
                     order_type = "整股"
-                    # 整股四捨五入至整張，ESun Common APCode 以「張」為單位
-                    if qty % 1000 >= 500:
-                        qty = (qty // 1000) + 1
-                        print(f"↻  {sym} {qty * 1000} 股餘數 ≥500，進位至 {qty} 張")
-                    else:
-                        lots = qty // 1000
-                        if lots == 0:
-                            result_holder["error"] = "quantity too small for board lot order"
-                            return
-                        if qty % 1000 > 0:
-                            print(f"↻  {sym} {qty} 股餘數 <500，捨去為 {lots} 張")
-                        qty = lots
+                    # 整股四捨五入至整張（ESun Common APCode 以「張」為單位）。
+                    # 2026-11-09（v1.1.36）：規則已收斂到 `core/lots.board_lot_qty()`，上層買單 sizing
+                    #   與停泊都先對齊過 ⇒ 這裡通常已是 1000 的倍數、不再改動。留著當「上層漏對齊」
+                    #   的最後防線，並印出**原始**股數（舊版印的是進位後的數字，讀日誌會被誤導）。
+                    _asked_qty = int(qty)
+                    _aligned = board_lot_qty(_asked_qty)
+                    if _aligned <= 0:
+                        result_holder["error"] = "quantity too small for board lot order"
+                        return
+                    if _aligned != _asked_qty:
+                        print(f"↻  {sym} {_asked_qty} 股依整股規則送出 {_aligned} 股"
+                              f"（{_aligned // LOT} 張，餘數 >=500 進位、<500 捨去）")
+                    qty = _aligned // LOT
 
                 # 下單：失敗時「強制重登 + 重試一次」
                 # 根因：login() 內有 `if self._logged_in: return`（no-op），
@@ -492,6 +523,13 @@ class EsunProvider:
                             print(f"🐞 [ESUN_DEBUG] attempt={_attempt} 例外類型={type(_e).__name__} "
                                   f"訊息={_last_err}")
                             _tb.print_exc()
+                        if is_non_retryable_order_error(_last_err):
+                            # 2026-11-04：時間／盤別錯誤（例：000017 非該盤別盤中或預約時間）
+                            # 重登不會改變「現在幾點」⇒ 直接放棄。VM 實例：13:45 停泊單被退
+                            # → 強制重登 → 重試 → 再被退一次（log 的 ⚠️／❌ 成對就是這樣來的）。
+                            print(f"⛔ E.Sun 下單被拒（{_last_err}）→ 時間／盤別錯誤，"
+                                  f"重登重試無效，放棄本筆")
+                            break
                         if _attempt == 1:
                             print(f"⚠️ E.Sun 下單失敗（{_last_err}）→ 強制重登後重試一次")
                             try:
@@ -556,6 +594,26 @@ class EsunProvider:
             return self._trade_sdk.get_inventories()
         except Exception as e:
             print(f"⚠️ query_inventories 失敗: {type(e).__name__}: {e}")
+            return None
+
+    def query_settlements(self):
+        """**未交割明細**（唯讀）。回傳 SDK 原始 list；失敗/未登入回 `None`。
+
+        ⚠️ 2026-11-05 實測（模擬環境）：只回**還沒交割**的義務（例：11/05 賣出、11/09 交割、價金 113,496）。
+        **交割日一到就從清單消失** ⇒ 它不能拿來回溯歷史買賣（11/03 的買進當天交割完就查不到了），
+        但可以看出「接下來幾天還要交割多少錢」——真錢上線前用它確認現金流，比 `get_balance`（模擬帳全 0）可靠。
+        """
+        try:
+            self.login()
+        except Exception as e:
+            print(f"⚠️ query_settlements 登入失敗: {e}")
+        if self._trade_sdk is None:
+            print("⚠️ query_settlements：trade SDK 不可用（未登入）")
+            return None
+        try:
+            return self._trade_sdk.get_settlements()
+        except Exception as e:
+            print(f"⚠️ query_settlements 失敗: {type(e).__name__}: {e}")
             return None
 
     def query_transactions(self, start=None, end=None):

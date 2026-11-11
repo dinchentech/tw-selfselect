@@ -1,7 +1,7 @@
 import requests
 import os
 import json
-from utils.telegram import send_telegram_message
+from utils.telegram import send_telegram_message, escape_md
 
 def send_line_notification(message):
     line_token = os.getenv("LINE_NOTIFY_TOKEN")
@@ -54,7 +54,7 @@ def send_daily_report(pd, date):
         df["timestamp"] = pd.to_datetime(df["timestamp"], format='mixed')
         today_df = df[df["timestamp"].dt.date == today]
     except Exception as e:
-        notify_all(f"❌ 讀取交易紀錄失敗: {e}")
+        notify_all(f"❌ 讀取交易紀錄失敗: {escape_md(e)}")
         return
 
     if today_df.empty:
@@ -71,7 +71,7 @@ def send_daily_report(pd, date):
         msg += "🔹 *買進*\n"
         for _, row in buys.iterrows():
             t = pd.Timestamp(row["timestamp"]).strftime("%H:%M")
-            s = row["symbol"]
+            s = escape_md(row["symbol"])
             msg += f"  {s}  {t}  @${row['price']:.2f}  {int(row['quantity'])}股\n"
         total_buy = (buys["price"] * buys["quantity"]).sum()
         msg += f"  買進總成本: NT${total_buy:,.0f}\n"
@@ -80,7 +80,7 @@ def send_daily_report(pd, date):
         msg += "🔸 *賣出*\n"
         for _, row in sells.iterrows():
             t = pd.Timestamp(row["timestamp"]).strftime("%H:%M")
-            s = row["symbol"]
+            s = escape_md(row["symbol"])
             msg += f"  {s}  {t}  @${row['price']:.2f}  {int(row['quantity'])}股\n"
         total_sell = (sells["price"] * sells["quantity"]).sum()
         msg += f"  賣出總收入: NT${total_sell:,.0f}\n"
@@ -158,7 +158,16 @@ def _build_holdings_message(pd, app_version, title_emoji, title, total_capital=N
     with open(holdings_path) as f:
         holdings = json.load(f)
     if not holdings:
-        return None
+        # 2026-11-05：持股全清空、但停泊部位還在時**仍要發報告**（否則「錢全押在 0050」這件事
+        # 完全不會出現在任何通知裡）。沒有停泊部位才真的沒東西可報。
+        try:
+            from core.park_asset import load_state as _ps_load
+            _st0 = _ps_load()
+            if int(_st0.get("shares") or 0) <= 0:
+                return None
+            holdings = {}
+        except Exception:
+            return None
 
     alloc = {}
     if alloc_path.exists():
@@ -182,14 +191,28 @@ def _build_holdings_message(pd, app_version, title_emoji, title, total_capital=N
             portfolio_config = {}
 
     date_str = datetime.now().strftime("%Y-%m-%d")
-    msg = f"{title_emoji} *{title} ({date_str})* V{app_version}\n"
+    msg = f"{title_emoji} *{escape_md(title)} ({date_str})* V{escape_md(app_version)}\n"
     msg += "─" * 20 + "\n"
+
+    # 停泊部位先載入：① 也要抓它的報價（否則「停泊」那行只有均價、看不到現價/市值）
+    #   ② 下方「可買股」要註明是否含停泊部位賣出後可動用的錢（2026-11-09，v1.1.39）
+    _pst = None
+    try:
+        from core.park_asset import load_state as _ps0, format_position as _fp0
+        _pst = _ps0()
+    except Exception:
+        _pst = None
+    _park_sym0 = str((_pst or {}).get("symbol") or "")
+    _park_sh0 = int((_pst or {}).get("shares") or 0)
 
     market_prices = {}
     price_dates = {}
     try:
         from core.inst_data import fetch_latest_closes_dated
-        for _sym, _v in (fetch_latest_closes_dated([str(s) for s in holdings.keys()]) or {}).items():
+        _syms_to_price = [str(s) for s in holdings.keys()]
+        if _park_sh0 > 0 and _park_sym0:
+            _syms_to_price.append(_park_sym0)
+        for _sym, _v in (fetch_latest_closes_dated(_syms_to_price) or {}).items():
             market_prices[str(_sym)] = _v.get('price')
             if _v.get('date'):
                 price_dates[str(_sym)] = _v['date']
@@ -245,8 +268,9 @@ def _build_holdings_message(pd, app_version, title_emoji, title, total_capital=N
 
         emoji = "🟢" if unrealized >= 0 else "🔴"
         _label = _strategy_label(sym, portfolio_config, auto_resolved)
-        _strat_txt = f" | {_label}" if _label else ""
-        msg += f"{emoji} {sym}: {shares}股{_strat_txt}\n"
+        # 2026-11-09：`keep_wait`／`auto→ma_cross` 的底線會讓 legacy Markdown 解析失敗 ⇒ 轉義
+        _strat_txt = f" | {escape_md(_label)}" if _label else ""
+        msg += f"{emoji} {escape_md(sym)}: {shares}股{_strat_txt}\n"
         msg += f"   成本均價 {avg_cost:,.0f} | 參考市價 {current_price:,.0f}\n"
         msg += f"   未實現損益 {unrealized:+,.0f} ({pct:+.2f}%)\n"
 
@@ -261,7 +285,71 @@ def _build_holdings_message(pd, app_version, title_emoji, title, total_capital=N
         _avail = total_capital - _inv
         msg += f"原始投資資本: NT${_orig:,.0f}\n"
         msg += f"投入資本(含滾入): NT${total_capital:,.0f}\n"
-        msg += f"現有資本(可買股): NT${_avail:,.0f}\n"
+        _avail_note = "（含停泊部位賣出後可動用）" if (_park_sh0 > 0) else ""
+        msg += f"現有資本(可買股): NT${_avail:,.0f}{_avail_note}\n"
+    # ── 停泊（閒置資金押 SELFSELECT_PARK_ASSET；2026-11-05 加）───────────────
+    # 為什麼一定要列：停泊是「錢不在股票上、但也不是現金」的第三種狀態，
+    # 原本報告只看 .env 的股票 ⇒ 停泊部位與「今天為什麼沒停泊」都完全看不到。
+    try:
+        from core.park_asset import format_position as _fp, load_state as _ps, skip_reason as _sr
+        _st = _pst if _pst is not None else _ps()
+        _sym = _st.get("symbol") or ""
+        _sh = int(_st.get("shares") or 0)
+        _cost = float(_st.get("cost") or 0.0)
+        _avg = (_cost / _sh) if (_sh > 0 and _cost > 0) else None
+        _px = None
+        if _sh > 0 and _sym:
+            try:
+                _px = market_prices.get(_sym)
+            except Exception:
+                _px = None
+        msg += "─" * 20 + "\n"
+        msg += "🅿️ 停泊（閒置資金）\n"
+        msg += "   " + escape_md(_fp(_sym or "—", _sh, _avg, _px)) + "\n"
+        # 「應該停泊 vs 實際停泊」（使用者 2026-11-05 要求）：由 park_idle_if_due 落地的
+        # logs/park_plan.json 提供；只在「今天的」計畫存在時顯示，避免拿舊資料誤導。
+        _plan_txt = None
+        try:
+            from core.park_asset import format_plan_vs_actual as _fpa
+            _pp = Path("logs/park_plan.json")
+            if _pp.exists():
+                _plan = json.loads(_pp.read_text(encoding="utf-8")) or {}
+                if str(_plan.get("date") or "") == date_str:
+                    _plan_txt = _fpa(_plan)
+        except Exception:
+            _plan_txt = None
+        if _plan_txt:
+            for _ln in _plan_txt:
+                # `format_plan_vs_actual()` 已自行轉義動態原因、並保留 `*粗體*` ⇒ 這裡原樣送出
+                msg += f"   {_ln}\n"
+        elif _sh <= 0:
+            _why = _sr(shares=0)
+            if _why:
+                msg += f"   今天未停泊：{escape_md(_why)}\n"
+    except Exception:
+        pass
+    # ── 合計（持股 ＋ 停泊；2026-11-09，v1.1.40）─────────────────────────────
+    # 為什麼要有：停泊佔資產一大塊（實測 20%），卻只有自己那一行，沒有「總資產」與「合計損益」
+    #   ⇒ 使用者看到「未實現損益 -26,620」會以為全帳虧這些，其實停泊腿 +11,200、合計 -15,420。
+    _park_val = None
+    _park_pnl = None
+    if _park_sh0 > 0 and _park_sym0:
+        _ppx = market_prices.get(_park_sym0)
+        _pcost0 = float((_pst or {}).get("cost") or 0.0)
+        try:
+            _ppx = float(_ppx or 0)
+        except (TypeError, ValueError):
+            _ppx = 0.0
+        if _ppx > 0:
+            _park_val = _park_sh0 * _ppx
+            if _pcost0 > 0:
+                _park_pnl = _park_val - _pcost0
+    if _park_val is not None:
+        msg += "─" * 20 + "\n"
+        msg += f"總資產(持股+停泊): NT${total_value + _park_val:,.0f}\n"
+        if _park_pnl is not None:
+            msg += (f"合計未實現損益: {total_unrealized + _park_pnl:+,.0f}"
+                    f"（持股 {total_unrealized:+,.0f}｜停泊 {_park_pnl:+,.0f}）\n")
     return msg
 
 

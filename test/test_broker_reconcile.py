@@ -128,6 +128,52 @@ class TestReport(unittest.TestCase):
         self.assertIn("2884", bad, "券商有、holdings 沒有 ⇒ 也要抓（幽靈／漏記）")
 
 
+class TestBrokerSymbols(unittest.TestCase):
+    """2026-11-05：`--json` 在 rows／consistent 都空時分不清「回傳 0 檔」與「回傳 1 檔但 0 股」。
+
+    實際情境：2615 當天賣掉後券商端已無未交割部位，輸出只剩「券商回傳只有 1 檔」一行，
+    看不出是哪一檔、股數多少。⇒ `build_report()` 回傳 `broker_symbols`（含 0 股列）。
+    """
+
+    def test_lists_every_returned_symbol_with_qty(self):
+        inv = rbb.parse_inventories(INV)
+        rep = rbb.build_report(inv, {"2881": 470, "2884": 2000, "5876": 1000}, [], "2026-09-23")
+        self.assertEqual(rep["broker_symbols"], {"2881": 470, "2884": 2000, "5876": 1000})
+
+    def test_zero_qty_row_is_visible_and_explained(self):
+        inv = rbb.parse_inventories([{"stk_no": "2615", "stk_na": "全新", "ap_code": "",
+                                      "qty_b": "0", "cost_sum": "0", "price_avg": "0"}])
+        rep = rbb.build_report(inv, {"2615": 0, "2408": 608, "2603": 909, "2609": 4000}, [], "2026-11-05")
+        self.assertEqual(rep["broker_symbols"], {"2615": 0}, "0 股列也要看得到是哪一檔")
+        self.assertEqual(rep["rows"], [], "0 股 vs 帳本 0 股 ⇒ 不是差異")
+        self.assertEqual(rep["consistent"], [], "consistent 只在股數 > 0 時列，維持原語義")
+        joined = " ".join(rep["notes"])
+        self.assertIn("2615", joined)
+        self.assertIn("股數為 0", joined)
+        self.assertIn("不代表沒有更早的舊部位", joined, "不可讓 0 股被讀成「券商很乾淨」")
+
+    def test_no_broker_data_gives_empty_mapping(self):
+        rep = rbb.build_report({}, {"2884": 2000}, [], "2026-09-23")
+        self.assertEqual(rep["broker_symbols"], {})
+        self.assertFalse(rep["ok"])
+
+    def test_json_and_text_reports_include_it(self):
+        inv = rbb.parse_inventories([{"stk_no": "2615", "stk_na": "全新", "ap_code": "",
+                                      "qty_b": "0", "cost_sum": "0", "price_avg": "0"}])
+        rep = rbb.build_report(inv, {"2615": 0}, [], "2026-11-05")
+        import io
+        import contextlib
+        import json as _json
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rbb.print_report(rep, as_json=True)
+        self.assertEqual(_json.loads(buf.getvalue())["broker_symbols"], {"2615": 0})
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rbb.print_report(rep, as_json=False)
+        self.assertIn("2615(0 股)", buf.getvalue(), "文字版也要讓人一眼看到是哪一檔")
+
+
 class TestSafety(unittest.TestCase):
     def test_tool_is_read_only(self):
         src = (ROOT / "scripts" / "reconcile_broker_books.py").read_text(encoding="utf-8")

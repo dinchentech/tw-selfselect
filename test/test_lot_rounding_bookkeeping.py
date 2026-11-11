@@ -76,9 +76,18 @@ class TestProviderReportsSentQty(unittest.TestCase):
         self.assertIn("display_qty", src)
 
     def test_provider_rounding_rule_documented(self):
-        src = (ROOT / "data" / "esun_provider.py").read_text(encoding="utf-8")
-        self.assertIn("進位至", src)
-        self.assertIn("捨去為", src)
+        """整股規則已收斂到 `core/lots.py`（2026-11-09，v1.1.36）。
+
+        這支原本檢查 provider 原始碼裡有「進位至／捨去為」字樣。規則搬家後（買方 sizing 也要用
+        同一份，見 `test/test_board_lot_guard.py`），改成檢查「規則只在 lots、provider 只呼叫」。
+        """
+        prov = (ROOT / "data" / "esun_provider.py").read_text(encoding="utf-8")
+        lots = (ROOT / "core" / "lots.py").read_text(encoding="utf-8")
+        self.assertIn("from core.lots import", prov)
+        self.assertIn("board_lot_qty", prov)
+        self.assertNotIn("% 1000 >= 500", prov, "provider 不得再自己實作一份整股規則")
+        self.assertIn("餘數 ≥500 進位", lots)
+        self.assertIn("餘數 <500 捨去", lots)
 
 
 class TestTraderUsesReconciledQty(unittest.TestCase):

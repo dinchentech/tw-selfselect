@@ -169,6 +169,7 @@ def build_report(broker_inv, holdings, csv_rows, date_str):
             rows.append(row)
         elif b.get("qty"):
             only_local.append(row)      # 一致（列出供人工目視）
+    broker_symbols = {s: int((broker_inv.get(s) or {}).get("qty") or 0) for s in sorted(broker_inv)}
     if not broker_inv:
         notes.append("查不到券商庫存（SDK 未登入／非交易時段／回應格式改變）⇒ 無法對帳")
     else:
@@ -179,8 +180,15 @@ def build_report(broker_inv, holdings, csv_rows, date_str):
             notes.append(f"券商回傳只有 {len(broker_inv)} 檔（疑似僅涵蓋當日成交／未交割）；"
                          f"本機另有 {len(uncovered)} 檔未涵蓋、無法比對：{', '.join(uncovered)}"
                          f"（完整庫存請以券商對帳單為準）")
+        # 2026-11-05：回傳 1 檔但股數 0 時，rows／consistent 都會是空的 ⇒ 人類看不出「是哪一檔」
+        #   （實際踩到：2615 當天已無未交割部位，輸出只剩「券商回傳只有 1 檔」）。
+        zeros = [s for s, q in broker_symbols.items() if q <= 0]
+        if zeros:
+            notes.append(f"券商回傳 {len(broker_symbols)} 檔，其中 {', '.join(zeros)} 股數為 0"
+                         "（＝當日已無未交割部位；不代表沒有更早的舊部位）")
     return {"ok": bool(broker_inv) and not rows, "date": date_str,
-            "rows": rows, "consistent": only_local, "notes": notes}
+            "rows": rows, "consistent": only_local,
+            "broker_symbols": broker_symbols, "notes": notes}
 
 
 def print_report(rep, as_json=False):
@@ -192,6 +200,8 @@ def print_report(rep, as_json=False):
     print("=" * 68)
     for n in rep["notes"]:
         print(f"⚠️  {n}")
+    if rep.get("broker_symbols"):
+        print("  券商回傳：" + "、".join(f"{sym}({qty} 股)" for sym, qty in rep["broker_symbols"].items()))
     if rep["rows"]:
         print("\n❌ 有差異（券商才是事實；本機帳本要照它校正）：")
         print(f"{'代號':<6}{'名稱':<8}{'券商庫存':>10}{'holdings':>10}{'CSV買進':>10}{'券商價':>9}{'CSV價':>9}  差異")

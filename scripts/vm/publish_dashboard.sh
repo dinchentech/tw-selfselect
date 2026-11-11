@@ -126,9 +126,44 @@ git checkout -q -B "$BRANCH" FETCH_HEAD >>"$LOG" 2>&1 || fail "切到 ${BRANCH}�
 
 cp "$SRC" "$CLONE/index.html" || fail "複製儀表板失敗"
 touch "$CLONE/.nojekyll"          # 不讓 Pages 跑 Jekyll（檔名含底線的資產會被吃掉）
+
+# ── 策略動畫頁（repo main 的 docs/）→ gh-pages 的 docs/ ────────────────────
+# 為什麼要有：儀表板「🎬 策略動畫說明」連到 {PAGES_BASE}/docs/<檔名>，而 Pages 的來源是
+#   **gh-pages 分支**（不是 main、也不是 docs/ 資料夾）。2026-11-03 實測：gh-pages 只有
+#   index.html＋.nojekyll ⇒ 五個動畫連結全部 404。所以發佈時要把 docs/ 的靜態頁一起放上去。
+# 來源用 git 的 main 分支（使用者把動畫頁搬去 docs/ 的唯一真相），不依賴 VM 上有沒有 docs/。
+MAIN_REF=""
+if git "${AUTH_ARGS[@]}" fetch --depth 1 origin main >>"$LOG" 2>&1; then
+  MAIN_REF=$(git rev-parse FETCH_HEAD 2>/dev/null || true)
+fi
+if [ -n "$MAIN_REF" ]; then
+  mkdir -p "$CLONE/docs"
+  SYNCED=0
+  # docs/ 下的 html（排除 index.html —— 那是儀表板快照，gh-pages 的 index.html 才是正式頁）
+  # ⚠️ 用 `-z` ＋ `read -d ''`：git 預設會把中文檔名（keep_wait策略說明.html）印成
+  #    "docs/keep_wait\347\255\226..."（core.quotePath），用 word-splitting 會漏檔（2026-11-03 實測只同步到 4 個）。
+  while IFS= read -r -d '' path; do
+    f="${path#docs/}"
+    case "$f" in
+      *.html) ;;
+      *) continue ;;
+    esac
+    [ "$f" = "index.html" ] && continue
+    if git show "${MAIN_REF}:${path}" > "$CLONE/docs/${f}" 2>>"$LOG"; then
+      SYNCED=$((SYNCED + 1))
+    else
+      say "⚠️ 取不到 ${path}（略過）"
+    fi
+  done < <(git -c core.quotePath=false ls-tree -r -z --name-only "$MAIN_REF" docs/)
+  git add docs >>"$LOG" 2>&1 || true
+  say "📄 策略動畫頁同步 → gh-pages/docs/：${SYNCED} 個（main ${MAIN_REF:0:8}）"
+else
+  say "⚠️ 取不到 main 分支（無法同步 docs/ 動畫頁，儀表板上的動畫連結會 404）"
+fi
+
 git add index.html .nojekyll
 if git diff --cached --quiet; then
-  say "⏭ 儀表板內容與線上相同 ⇒ 不用發佈"
+  say "⏭ 儀表板與動畫頁內容與線上相同 ⇒ 不用發佈"
   exit 0
 fi
 

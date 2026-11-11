@@ -115,7 +115,7 @@ STRATEGY_PARAMS = {
 def get_strategy_from_env_or_args():
     """從環境變數或命令列取得策略名稱與參數"""
     parser = argparse.ArgumentParser(
-        description='TW AutoTrader - Backtest Mode',
+        description='TW SelfSelect - Backtest Mode',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "各策略可用參數：\n"
@@ -270,7 +270,7 @@ def main():
     strategy_name, start_date, params, symbol_override = get_strategy_from_env_or_args()
     config = {"func": STRATEGY_CONFIG[strategy_name]["func"], "params": params}
     
-    print(f"📊 開始回測 TW AutoTrader")
+    print(f"📊 開始回測 TW SelfSelect")
     print(f"🎯 使用策略: {strategy_name}")
     print(f"⚙️  策略參數: {config['params']}")
     print(f"📅 回測期間: {start_date} ~ 今日\n")
