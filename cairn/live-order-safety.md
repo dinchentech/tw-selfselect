@@ -61,15 +61,20 @@ authoring_mode: ai_generated
 
 ## VM 對帳清單（發現重複下單時照這個順序查）
 
+> ⚠️ 這些指令要在 **VM 上**跑（`gcloud compute ssh tw-autotrader --zone=asia-east1-b --command="…"`），
+> 容器名是 `tw_selfselect_bot`（`docker-compose.yml` 的 `container_name`）。本機 WSL **沒有**這個容器。
+> 2026-11-16：本節原本抄成 `selfselect_trader`（那是 Python 檔名）⇒ 照抄只會得到
+> `Error response from daemon: No such container`，白跑一趟。
+
 ```bash
 # 1) 停泊帳（自建的帳）——shares 是否遠小於實際成交？
-docker exec selfselect_trader sh -lc 'cat /app/logs/park_position.json'
+docker exec tw_selfselect_bot sh -lc 'cat /app/logs/park_position.json'
 # 2) 停泊稽核流水（每次買/賣一筆 JSON）——08:xx 之後 13:25–13:30 內有幾筆 BUY 0050？
-docker exec selfselect_trader sh -lc 'tail -20 /app/logs/park_trades.jsonl'
+docker exec tw_selfselect_bot sh -lc 'tail -20 /app/logs/park_trades.jsonl'
 # 3) 三本帳（performance.csv / holdings.json / stock_allocation.json）
-docker exec selfselect_trader sh -lc 'tail -20 /app/logs/performance.csv; cat /app/logs/holdings.json'
+docker exec tw_selfselect_bot sh -lc 'tail -20 /app/logs/performance.csv; cat /app/logs/holdings.json'
 # 4) 帶時間戳的完整 log（才能確認「哪一輪」送的單）
-docker logs -t --since 48h selfselect_trader | grep -E '下單|停泊|000017' | tail -50
+docker logs -t --since 48h tw_selfselect_bot | grep -E '下單|停泊|000017' | tail -50
 # 5) 券商實際成交：以玉山 App／API 的委託與成交明細為準（本機看不到就無法定案）
 #    若 (3) 與券商不一致 ⇒ 跑 scripts/reconcile_broker_books.py 產出稽核報告再決定補記或作廢
 ```
@@ -378,3 +383,107 @@ qty' ＝ fit_buy_qty(qty, px, 可用現金)      # 共用整股對齊，超過�
 `cash_available()` 的口徑仍是「本金 − 持股成本」，**賣出回款不加回**（刻意保守）⇒ 賣出後騰出的額度
 要等分帳本成本被調降才算得出來。真錢上線前應改成向券商查可用餘額（`get_balance()` 在正式環境應有值，
 模擬環境回 0）。
+
+## 診斷：連續多日零成交怎麼查（2026-11-18 實例）
+
+症狀：收盤每天都是「今日帳本沒有成交紀錄」、停泊每天「受限於可用現金 0」⇒ 直覺懷疑「訊號被吞」。
+三段證據由硬到軟，順序別顛倒（先排除「有沒有動」，再談「該不該動」）：
+
+1. **有沒有成交（權威）**：`logs/performance.csv` 的最後一列。停泊交易**不在**這份檔裡（另一本帳 `park_trades.jsonl`），
+   所以它回答的是「策略單有沒有成交」。旁證：`logs/broker_reconcile.jsonl` 每個交易日一列
+   ——沒成交的日子會明寫「今日帳本沒有成交紀錄 ⇒ 無需對帳」（有這列＝當天收盤對帳確實跑過，不是程式沒跑到）。
+2. **有沒有送單嘗試**：容器 log 的 `🔔 交易通知`（送單成功才印）、`❌ … 錯誤`、`⚠️`（排除 `⚠️ <代號> 報價` 這類診斷）、
+   `logs/order_unknown*.json`、`logs/entry_attempts.json`（只有「試過買但沒成交」才會出現）。
+   全都沒有 ⇒ 連嘗試都沒有，不是被擋或失敗被吞。
+3. **該不該有訊號**：訊號本身不落紀錄，要自己重建。`logs/auto_resolved.json` 是 auto 的**鎖定型態**
+   （買進後 `AUTO_FIXED_CACHE` 固定，不再每日重路由）；配上 `.env` 的 `PC_*`（本專案的 `PC_*` 只有
+   `strategy/alloc/max_entry_price`，策略參數不存在 ⇒ 函式預設值），用官方日 K 逐日跑
+   `strategies.*_strategy(df)['signal'].iloc[-1]` 即可。
+
+2026-11-18 實測（11/10–11/18 七個交易日，四檔 signal 全 0）：
+
+| 代號 | 鎖定策略 | 賣出條件 | 11/18 實況 |
+|---|---|---|---|
+| 2408 | bollinger | 收盤 > 上軌 **且** RSI > 70 | 收 325 vs 上軌 494.7 |
+| 2609 | bollinger | 同上 | 收 60.5 vs 上軌 64.95／RSI 67.5 |
+| 2615 | ma_cross | MA9 下穿 MA21（ATR 過濾） | MA9 早已在 MA21 下、沒有**新**交叉 |
+| 2603 | breakout | 收盤 < Donchian 低（20 日） | 收 257.5 vs Donchian 低 236.5 |
+
+判讀：**滿倉把買方鎖死**（本金 1,000,000 ＝ 持股成本 847,640 ＋ 停泊 195,200 ⇒ 現金 0），
+賣方則由鎖定型態的嚴格條件決定。這不是故障；真要「跌了就出場」是策略決策（Bollinger 反轉沒有停損概念，
+2408 在 2026-11 這波 −21% 不會自動出場），不要在診斷時把「沒停損」誤當成 bug。
+⇒ 2026-11-20 已把它變成一個**可設定的開關**（`STOP_LOSS_PCT`，預設 0＝維持原本行為），見下一節「缺陷十」。
+
+
+## 缺陷十：實盤**完全沒有停損**（2026-11-20 修，v1.1.44）
+
+### 症狀
+
+`core/backtest_rules.stop_hit()` 從 2026-09-16 就存在（回測 `STOP_LOSS_PCT` 用的），
+但 `selfselect_trader.py`、`strategies/`、`core/live_*` **一處都沒有引用它**
+（`grep -rn "hard_stop\|stop_pct\|STOP_LOSS_PCT"` 只打到回測腳本與測試）。
+⇒ 回測可以把「−10% 出場」當成一個維度掃，實盤卻只能抱住。
+
+2026-11-18／11-20 撞到的實例（追零成交時才發現，見上一節）：
+
+| 日期 | 2408（608 股 @ 411） | 意義 |
+|---|---|---|
+| 11/18 收盤 | 325（−20.9%／約 −52k） | Bollinger 賣訊「收盤 > 上軌 且 RSI > 70」不成立 |
+| 11/20 開盤 | 276.50（−32.7%／約 −82k） | 同上，且沒有任何機制會出場 |
+
+停泊的 0050 同理：`park_release_all()` 只在「要買股票」時觸發，不看停泊部位的損益。
+
+### 修法（v1.1.44）
+
+1. **判定與旋鈕直接共用回測**：`from core.backtest_rules import stop_hit, stop_loss_env`，
+   `stop_loss_pct_now()` 每次呼叫都讀 env（`.env` 熱重載後立刻生效，不必重啟）。
+   `STOP_LOSS_PCT` 未設或 0 ⇒ **完全停用**，行為與 v1.1.43 逐位相同（換版本身不動任何倉位）。
+2. **判定點**：`main()` 每檔迴圈裡、「策略訊號之後、下單之前」⇒ 停損會覆蓋策略訊號，
+   但**仍走同一條下單路徑**（整股對齊／風控／成交確認／分帳本／`🔔 交易通知`），不另寫一套下單邏輯。
+3. **只在 13:25–13:30 下單窗口**判定（`_close_order_window`；`keep_wait` 也一樣）⇒ 與回測
+   「當日收盤判定、以收盤價成交」同口徑。判定價＝本圈 `px`（`acd` 最新收盤＝現價）。
+4. **均價口徑**：`avg_entry_cost()` 取分帳本 `total_buy_cost ÷ total_buy_shares`
+   （賣出時按比例扣減 ⇒ 是**現有部位**的均價，與賣出路徑算 `avg_cost` 同一個來源）。
+5. **全數出場**：`signal=-1`、`position_size=holdings`。
+6. `PROFIT_MARGIN`（防 churn、省手續費）以 `_stop_exit` 放行 —— 它不是風控，
+   擋住停損就等於沒有停損（實測 −82k 這種大額本來會過門檻，但 −1% 的小額停損會被吃掉）。
+7. 診斷：`🛑 2408 觸發硬停損 −10%：現價 276.50 ≤ 均價 411.00×(1−10%)=369.90 ⇒ 全數出場 608 股`
+   ＋ TG 每日每檔一次（`_stop_notified` 去重）。
+
+### 改動時不可破壞的不變式
+
+- 停損**必須**留在「`signal` 算完之後、`if (signal != 0)` 派送之前」（抱怨：不然覆蓋不到策略訊號）。
+- 停損**必須**只活在 `_close_order_window` 內（窗口外賣出＝回測不會做的交易，2026-09-16 2006 實例）。
+- `stop_hit` 的語意（`≤`、0＝停用、entry/px 壞值不觸發）**不得**在實盤另寫一份。
+- `_stop_exit` 只放行 `PROFIT_MARGIN`，**不可**拿去放行風控（`rm.check_trade_allowed`）或整股對齊。
+- 停在 `MAX_DAILY_TRADES_PER_SYMBOL`（現行 1）與 30 分鐘賣出冷卻之下：當天已交易過就當天不再停損，
+  這是刻意的（避免同日來回），不是漏洞。
+
+### 已知限制
+
+- 一天只有一個判定時點（13:25–13:30 的第一圈起算）：盤中崩跌要等收盤前那一圈才會出場。
+- **整股對齊會留零股殘尾**：`sell_lot_qty()` 對 1,584 股回 1,000（避免券商進位送超過庫存）⇒ 剩 584 股
+  當天受 `MAX_DAILY_TRADES_PER_SYMBOL=1` 與 30 分鐘冷卻限制不再送，**隔天窗口仍在停損線下就再砍一次**。
+  608 股這種本來就是零股的部位會直接送 608 股（不需要拆）。
+- 停損只認**均價**，沒有 ATR／移動停利／分層出場（keep_wait 的 `tp_tiers` 只管停利，不管停損）。
+- **停泊部位不在停損範圍**：0050 是「閒置資金停泊」，出場條件是「要買股票時釋出」，不是策略部位
+  （它的損益照 v1.1.40 口徑顯示在報告裡，但不會被 `STOP_LOSS_PCT` 砍）。
+- `STOP_LOSS_PCT` 不隨 `deploy_source.sh` 同步（該腳本保留 VM 既有 `.env`）⇒ 換版≠啟用。
+
+### 現行設定與操作陷阱（2026-11-20）
+
+- **現值：`STOP_LOSS_PCT=40`**（使用者 2026-11-20 裁定）。定位是**災難保險**，不是短線停損：
+  對已持有的部位設成 10% 等於「用今天的價格立刻認賠」，要把「要不要停損」跟「這筆要不要認賠」分開決定。
+- **怎麼改（熱重載，不必重啟）**：`.env` 是**單檔 bind mount**（`docker-compose.yml` 的 `./.env:/app/.env`），
+  ⚠️ **不要用 `sed -i`** —— 它會建新 inode 再 rename，宿主檔案與容器內的 `/app/.env` 就脫鉤
+  （之後改宿主檔案、容器看不到，而且看起來一切正常）。用「原地覆寫同一 inode」：
+
+  ```bash
+  docker exec tw_selfselect_bot sh -c \
+    "python3 -c \"p='/app/.env'; s=open(p).read(); open(p,'w').write(s.replace('STOP_LOSS_PCT=40','STOP_LOSS_PCT=10'))\"; grep -n '^STOP_LOSS_PCT=' /app/.env"
+  ```
+
+  驗收：60 秒內應出現 `📥 偵測到 .env 內容變更（<md5> → <md5>）⇒ 立即套用` ＋ `🔄 … .env 完成`。
+  沒出現 ⇒ 主迴圈沒在跑（看 `🐕 watchdog`）或檔案真的脫鉤了（比對 `ls -li /app/.env` 的 inode）。
+- 觸發後的驗收行（13:25–13:30）：`🛑 <代號> 觸發硬停損 −40%：現價 … ≤ 均價 … ⇒ 全數出場 N 股`
+  ＋ 一般 `🔔 交易通知 … 動作: 賣出`。
