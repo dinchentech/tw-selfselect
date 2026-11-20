@@ -428,21 +428,24 @@ def _mis_date_str(raw) -> str:
     return ''
 
 
-def fetch_intraday_quotes(symbols, timeout: int = 8) -> dict:
-    """TWSE MIS 即時報價：`{sym: {'price','date','time'}}`（13:30 後 `price` 即**當日收盤**）。
+def fetch_intraday_quotes(symbols, timeout: int = 8, allow_prev_close: bool = True) -> dict:
+    """TWSE MIS 即時報價：`{sym: {'price','date','time','prev_close'}}`（13:30 後 `price` 即**當日收盤**）。
 
     為什麼需要（2026-09-16）：`fetch_latest_closes` 走 TWSE STOCK_DAY，該端點**盤後才更新**
     ⇒ 13:45 產生的收盤報告拿到的是**前一個交易日**的收盤價（實測 09-16 報告顯示 09-15 價格）。
     MIS 的 `z`＝最後成交價、`d`＝資料日期，可取得當日收盤。
 
     - 上市/上櫃都查（`tse_<sym>.tw|otc_<sym>.tw`），取有資料的那筆。
-    - `z` 無成交（`-`）時退回昨收 `y`（避免整檔沒有價格）。
+    - `z` 無成交（`-`）時退回昨收 `y`（避免整檔沒有價格）；`prev_close=True` 標示那一筆是昨收。
+      ⚠️ `allow_prev_close=False` 時**不退回昨收**——用在「拿它當今天價格」的地方
+      （`data/esun_provider` 的報價備援，v1.1.42）：把昨收當今天價格會讓停泊/買進股數用錯價。
+      這條路徑的順序是 **`z` → 最佳買賣價中價（成形價）→ 不給**（2026-11-17 加；`z` 太不穩）。
+    - 回傳每一筆都帶 `source`：`'last'`／`'bid_ask_mid'`／`'prev_close'`。
     - **任何失敗一律回 `{}`**，由呼叫端退回日線來源，絕不拋例外（報告不能因報價來源掛掉而消失）。
     """
-    out = {}
     syms = [str(s) for s in (symbols or [])]
     if not syms:
-        return out
+        return {}
     try:
         import requests
         sess = requests.Session()
@@ -456,21 +459,69 @@ def fetch_intraday_quotes(symbols, timeout: int = 8) -> dict:
                         timeout=timeout)
         payload = resp.json()
     except Exception:
-        return out
+        return {}
+    return _parse_mis_quotes(payload, syms, allow_prev_close=allow_prev_close)
 
-    for item in (payload.get('msgArray') or []):
+
+def _mid_price(item) -> float:
+    """MIS 五檔最佳買賣價的中價（「成形價」）；取不到回 `0.0`。
+
+    `b`／`a` 是底線分隔的五檔價字串（`'109.0000_108.5000_…'`），第一碼就是最佳買賣價。
+    只有單邊（漲跌停鎖死、或對面掛單被吃完）時就用有的那一邊——那仍是**今天的價**。
+    """
+    def _best(raw):
+        try:
+            v = float(str(raw or '').split('_')[0].replace(',', ''))
+            return v if v > 0 else 0.0
+        except Exception:
+            return 0.0
+
+    bid, ask = _best(item.get('b')), _best(item.get('a'))
+    if bid > 0 and ask > 0:
+        return round((bid + ask) / 2.0, 2)
+    return bid or ask
+
+
+def _parse_mis_quotes(payload, syms, allow_prev_close: bool = True) -> dict:
+    """把 MIS `getStockInfo.jsp` 的 payload 轉成 `{sym: {price,date,time,prev_close,source}}`（純函式，可測）。
+
+    `source` 說明這個價是怎麼來的：`'last'`（`z` 當日最後成交價）／`'bid_ask_mid'`
+    （成形價：最佳買賣價中價）／`'prev_close'`（昨收 `y`，僅 `allow_prev_close=True`）。
+
+    ⚠️ `allow_prev_close=False`（＝拿它當「今天的價格」用，見 `data/esun_provider` 的報價備援）
+    的取價順序是 **`z` → 成形價**，**永不退昨收**。
+    為什麼需要成形價（2026-11-17 實測）：`z` 很不穩——同一時刻隨機抽 12 檔只有 3 檔有 `z`，
+    而 2615／2609／2603 連測 8 次（24 秒）**一次都沒有** `z`；對照 2408 是 8/8 都有。
+    只做 `z` 等於備援對「三檔」全不觸發。五檔買賣價 `b`／`a` 同期 12/12 都有值。
+    """
+    out = {}
+    syms = [str(s) for s in (syms or [])]
+    for item in ((payload or {}).get('msgArray') or []):
         try:
             sym = str(item.get('c') or '').strip()
             if sym not in syms:
                 continue
             raw_price = item.get('z')
+            prev_close = False
+            source = 'last'
             if raw_price in (None, '', '-'):
-                raw_price = item.get('y')          # 無成交 → 用昨收
+                mid = _mid_price(item) if not allow_prev_close else 0.0
+                if mid > 0:
+                    out[sym] = {'price': mid, 'date': _mis_date_str(item.get('d')),
+                                'time': str(item.get('t') or ''), 'prev_close': False,
+                                'source': 'bid_ask_mid'}
+                    continue
+                if not allow_prev_close:
+                    continue                     # 沒有當日成交價／成形價就不給（避免拿昨收當今天）
+                raw_price = item.get('y')        # 無成交 → 用昨收
+                prev_close = True
+                source = 'prev_close'
             price = float(str(raw_price).replace(',', ''))
             if price <= 0:
                 continue
             out[sym] = {'price': price, 'date': _mis_date_str(item.get('d')),
-                        'time': str(item.get('t') or '')}
+                        'time': str(item.get('t') or ''), 'prev_close': prev_close,
+                        'source': source}
         except Exception:
             continue
     return out

@@ -26,7 +26,7 @@ import glob
 import threading
 import pandas as pd
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from configparser import ConfigParser
 
 from esun_marketdata import EsunMarketdata
@@ -54,6 +54,65 @@ ESUN_DEBUG = os.getenv("ESUN_DEBUG", "").strip().lower() in ("1", "true", "yes",
 # 讓同一檔連續逾時不會把 13:25–13:30 的下單窗口全部吃掉。
 NET_QUOTE_RETRIES = max(1, int(os.getenv("NET_QUOTE_RETRIES", "2")))
 NET_QUOTE_BACKOFF_SEC = float(os.getenv("NET_QUOTE_BACKOFF_SEC", "0.4"))
+
+# ── 玉山取不到價 → 改抓 TWSE MIS（2026-11-16，v1.1.42）────────────────────
+# 為什麼：2408 每天 09:00 開盤首圈必定逾時（8+8 秒換 `px=0`，合成當日 K 少一分鐘）。MIS 是現成的
+#   第二來源（持倉報告／儀表板本來就在用 `core.inst_data.fetch_intraday_quotes`），不新增依賴。
+# ⚠️ **永不退昨收**（`y`）：把昨收當今天價格會讓停泊／買進股數用錯價，比回 0 更糟
+#   （見 `fetch_intraday_quotes(allow_prev_close=False)`）。可用順序＝`z` 當日最後成交價
+#   → **成形價（最佳買賣價中價）**→ 不給。成形價是 2026-11-17 補的：`z` 只在「剛好有撮合到」
+#   的 snapshot 才有（抽 12 檔只有 3 檔有值；2615／2609／2603 連測 8 次全沒有，只認 `z` 的備援
+#   對那三檔等於不存在），而五檔 `b`/`a` 12/12 都有值。
+# 想整支關掉：`.env` 設 `ESUN_MIS_QUOTE_FALLBACK=0`（重啟容器生效）。
+MIS_QUOTE_FALLBACK = os.getenv("ESUN_MIS_QUOTE_FALLBACK", "1").strip().lower() not in (
+    "0", "false", "no", "off")
+_MIS_QUOTE_TIMEOUT_SEC = 3          # 備援只值這麼多秒：本體已經卡掉 16 秒，13:25–13:30 窗口要塞多檔
+                                    #   ⇒ 最壞每檔 16.4 + 2×3 秒（MIS 是 cookie＋查詢兩個請求）
+
+
+def _tpe_ts() -> str:
+    """台北時間 `HH:MM:SS`：報價診斷行的前綴。
+
+    為什麼（2026-11-17）：這些 print 原本**沒有時間戳**，貼出來的 log 看起來永遠像「啟動就出事」——
+    11/16 與 11/17 兩次都得回頭跑 `docker logs -t` 再換算（`-t` 是 **UTC**，`01:00:12Z` ＝ 台北 09:00:12）。
+    容器時區是 UTC ⇒ 這裡明確換算成 UTC+8（台灣無夏令時間，固定 +8 即可）。
+    """
+    return datetime.now(timezone(timedelta(hours=8))).strftime("%H:%M:%S")
+
+# ── 缺價→恢復的紀錄（2026-11-16，v1.1.41）─────────────────────────────────
+# 為什麼需要：**成功的報價完全不落紀錄**，`⚠️/❌` 只印失敗 ⇒「開盤第一圈逾時、下一圈恢復」
+#   這種形狀在 log 上只剩「一次失敗」，看不出到底恢復了沒有（2026-11-16 查 2408 就卡在這裡：
+#   只能靠「沒有第二筆 ⚠️」反推，而 `get_current_price` 還有兩條靜默回 0 的路徑）。
+# 做法：缺價時記住**第一次**失敗的時間，同一檔下次拿到正價格時印**一行**
+#   `✅ 2408 報價已恢復（377.00，缺價 68 秒）`。正常盤零輸出，不會洗版。
+# ⚠️ 2026-11-17 更正：原本只記「兩次都失敗（❌）」，於是**「⚠️ 之後重試就成功」完全不會印 ✅**
+#   ——而那是每天 09:00 都會發生的形狀，等於最該被證明的情況沒有證據（11/17 只能靠「沒有 ❌」反推）。
+#   現在**中途逾時也記**，重試成功時照樣印 ✅。
+_quote_missing = {}                 # {symbol: 第一次失敗的 time.time()}
+
+
+def quote_missing_snapshot():
+    """目前仍在缺價的標的 `{symbol: 第一次失敗的 epoch 秒}`（測試／診斷用；含「重試中」的那一刻）。"""
+    return dict(_quote_missing)
+
+
+def _note_quote_failed(symbol):
+    """記住第一次失敗的時間（同檔連續失敗不覆寫，缺價秒數才不會被重試洗短）。"""
+    _quote_missing.setdefault(str(symbol), time.time())
+
+
+def _note_quote_recovered(symbol, price):
+    """拿到**正價格**時，若先前缺價就印一行恢復訊息並清除紀錄。"""
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        return
+    if px <= 0:
+        return                      # 回 0 ＝ 還是沒有價（例如回應沒有 lastPrice），不算恢復
+    started = _quote_missing.pop(str(symbol), None)
+    if started is None:
+        return
+    print(f"[{_tpe_ts()}] ✅ {symbol} 報價已恢復（{px:.2f}，缺價 {max(0.0, time.time() - started):.0f} 秒）")
 
 # 「重登重試也救不回來」的下單錯誤：時間／盤別類。含這些字樣就不做強制重登重試
 # （2026-11-04 VM：13:45 停泊單被退 000017，重登後重試必再失敗，只是多打一次 API）。
@@ -357,6 +416,16 @@ class EsunProvider:
         1/10；重試一次的總預算（8+8=16 秒）仍與原本一檔卡 30 秒同級，不會讓
         `place_order` 的外層 `ESUN_PLACE_ORDER_TIMEOUT` 多等。
         只對「逾時／連線錯誤」重試——其他錯誤（參數錯、token 失效）重試無意義。
+
+        📌 2026-11-16（v1.1.41）：失敗會記進 `_quote_missing`，同一檔下次拿到正價格時印一行
+        `✅ 2408 報價已恢復（377.00，缺價 68 秒）` ⇒ 「一次失敗之後到底有沒有恢復」不必再靠
+        「沒有第二筆 ⚠️」反推（見模組上方說明）。
+        📌 2026-11-17：**中途**逾時（＝重試前那一次）也記 ⇒ 「⚠️ 之後重試就成功」這種每天 09:00
+        都會出現的形狀，現在會緊接印一行 `✅ … 報價已恢復（109.50，缺價 4 秒）`。
+
+        🩹 2026-11-16（v1.1.42）：玉山**全部失敗**（含「有回應但沒有 `lastPrice`」）時改抓
+        TWSE MIS 的當日最後成交價，印 `🩹 2408 玉山取價失敗（…）⇒ 改用 TWSE MIS 備援價 377.00`；
+        MIS 也拿不到就照舊回 `0.0`（呼叫端行為完全不變）。MIS 只有昨收時**不使用**。
         """
         if not self._ensure_available():
             return 0.0
@@ -364,22 +433,66 @@ class EsunProvider:
         for _attempt in range(1, NET_QUOTE_RETRIES + 1):
             try:
                 q = self._marketdata.rest_client.stock.intraday.quote(symbol=symbol)
-                return float(q.get("lastPrice", 0))
+                px = float(q.get("lastPrice", 0))
+                if px > 0:
+                    _note_quote_recovered(symbol, px)
+                    return px
+                _note_quote_failed(symbol)       # 有回應但沒有成交價 ⇒ 對呼叫端就是「沒價」
+                return self._mis_fallback_price(symbol, "回應沒有 lastPrice")
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
                 if _attempt < NET_QUOTE_RETRIES:
-                    print(f"⚠️ {symbol} 報價逾時／斷線，第 {_attempt}/{NET_QUOTE_RETRIES - 1} 次重試"
+                    # ⚠️ 2026-11-17：**中途**逾時也要記進 `_quote_missing`，否則「重試就成功」
+                    #   這個每天 09:00 都會發生的形狀永遠印不出 ✅ 恢復——v1.1.41 只記「兩次都失敗」，
+                    #   結果還是只能靠「沒有 ❌」反推（11/17 09:00 就是這樣，查 log 才敢下結論）。
+                    _note_quote_failed(symbol)
+                    print(f"[{_tpe_ts()}] ⚠️ {symbol} 報價逾時／斷線，第 {_attempt}/{NET_QUOTE_RETRIES - 1} 次重試"
                           f"（退避 {NET_QUOTE_BACKOFF_SEC}s，{e}）")
                     try:
                         time.sleep(NET_QUOTE_BACKOFF_SEC)
                     except Exception:
                         pass
                     continue
-                print(f"❌ E.Sun get_current_price error: {e}")
-                return 0.0
+                _note_quote_failed(symbol)
+                print(f"[{_tpe_ts()}] ❌ E.Sun get_current_price error: {e}")
+                return self._mis_fallback_price(symbol, "逾時／斷線")
             except Exception as e:
-                print(f"❌ E.Sun get_current_price error: {e}")
-                return 0.0
+                _note_quote_failed(symbol)
+                print(f"[{_tpe_ts()}] ❌ E.Sun get_current_price error: {e}")
+                return self._mis_fallback_price(symbol, "其他錯誤")
         return 0.0
+
+    def _mis_fallback_price(self, symbol, reason: str) -> float:
+        """玉山取價失敗後的備援：TWSE MIS 的**今天**的價（拿不到就回 `0.0`，與 v1.1.41 相同）。
+
+        取價順序（在 `core.inst_data._parse_mis_quotes` 內）：當日最後成交價 `z`
+        → **最佳買賣價中價（成形價）** → 不給。**永不退昨收**——昨收當今天價格會讓停泊／
+        買進股數用錯價，比回 0 更糟。
+
+        ⚠️ 為什麼要成形價（2026-11-17 實測）：MIS 的 `z` 只在「剛好有撮合到」的 snapshot 才有，
+        隨機抽 12 檔只有 3 檔有值；2615／2609／2603 連測 8 次（24 秒）**一次都沒有** `z`
+        （同批 2408 是 8/8 都有）⇒ 只認 `z` 的備援對那三檔等於不存在。五檔買賣價 `b`／`a`
+        同期 12/12 都有值 ⇒ 補這一階（成形價是今天的價，不是昨收）。
+
+        任何例外都不外拋（報價路徑不可因備援而炸）。
+        """
+        if not MIS_QUOTE_FALLBACK:
+            return 0.0
+        try:
+            from core.inst_data import fetch_intraday_quotes
+            q = (fetch_intraday_quotes([str(symbol)], timeout=_MIS_QUOTE_TIMEOUT_SEC,
+                                       allow_prev_close=False) or {}).get(str(symbol)) or {}
+            px = float(q.get("price") or 0)
+        except Exception:
+            return 0.0
+        if px <= 0:
+            return 0.0
+        _quote_missing.pop(str(symbol), None)    # 有價了就不算缺價（不再印 ✅，這行已說明來源）
+        if (q.get("source") or "last") == "bid_ask_mid":
+            print(f"[{_tpe_ts()}] 🩹 {symbol} 玉山取價失敗（{reason}）⇒ 改用 TWSE MIS 成形價 {px:.2f}"
+                  f"（該檔此刻無成交價，取最佳買賣價中價）")
+        else:
+            print(f"[{_tpe_ts()}] 🩹 {symbol} 玉山取價失敗（{reason}）⇒ 改用 TWSE MIS 備援價 {px:.2f}")
+        return px
 
     def get_historical_data(self, symbol: str, days: int = 30) -> pd.DataFrame:
         """歷史日 K (OHLCV) — 用於初始化累積資料"""

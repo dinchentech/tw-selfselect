@@ -11,8 +11,13 @@
 ⚠️ 報價（`get_current_price`）的讀取逾時：原本是玉山 SDK 內建的 30 秒
    （現在由主程式的 `NET_TIMEOUT_SEC` 補上；2026-11-02 起報價改走較短的
    `NET_QUOTE_TIMEOUT_SEC`，見下方 `QuoteTimeoutBudgetTest`／`QuoteRetryTest`）。
+
+✅ 缺價→恢復的紀錄（v1.1.41，2026-11-16）：成功的報價不留紀錄，只印「恢復」那一行
+   （`QuoteRecoveryNoticeTest`）。
 """
 import importlib
+import io
+import contextlib
 import os
 import unittest
 from pathlib import Path
@@ -188,6 +193,22 @@ class _QuoteStub:
         return eff
 
 
+def _make_provider(side_effects):
+    """建一個不碰 keyring／config 的 provider，`quote()` 依 `side_effects` 回應。"""
+    if EsunProvider is None:
+        raise unittest.SkipTest("需要玉山 SDK（esun_marketdata / esun_trade）")
+    import types
+    p = EsunProvider.__new__(EsunProvider)      # 繞過 __init__（需 keyring/config）
+    p._login_failed = False
+    p._session_date = EsunProvider._today()     # 已有今日 session ⇒ 不觸發跨日重登
+    p.login = lambda: True
+    stub = _QuoteStub(side_effects)
+    p._marketdata = types.SimpleNamespace(
+        rest_client=types.SimpleNamespace(
+            stock=types.SimpleNamespace(intraday=types.SimpleNamespace(quote=stub))))
+    return p, stub
+
+
 class QuoteRetryTest(unittest.TestCase):
     """`get_current_price` 對逾時／斷線重試一次（2026-11-02）。
 
@@ -196,18 +217,20 @@ class QuoteRetryTest(unittest.TestCase):
     """
 
     def _provider(self, side_effects):
-        if EsunProvider is None:
-            raise unittest.SkipTest("需要玉山 SDK（esun_marketdata / esun_trade）")
-        import types
-        p = EsunProvider.__new__(EsunProvider)      # 繞過 __init__（需 keyring/config）
-        p._login_failed = False
-        p._session_date = EsunProvider._today()     # 已有今日 session ⇒ 不觸發跨日重登
-        p.login = lambda: True
-        stub = _QuoteStub(side_effects)
-        p._marketdata = types.SimpleNamespace(
-            rest_client=types.SimpleNamespace(
-                stock=types.SimpleNamespace(intraday=types.SimpleNamespace(quote=stub))))
-        return p, stub
+        return _make_provider(side_effects)
+
+    def setUp(self):
+        import data.esun_provider as P
+        P._quote_missing.clear()      # 缺價狀態是模組級 ⇒ 每個測試都從乾淨狀態開始
+        # v1.1.42 起失敗會走 MIS 備援 ⇒ 這裡把它關掉（回空 dict＝備援也拿不到價），
+        # 才驗得到「兩次都失敗就回 0」這個原始契約；備援本身由 test_quote_mis_fallback.py 驗。
+        self._mis = patch('core.inst_data.fetch_intraday_quotes', return_value={})
+        self._mis.start()
+
+    def tearDown(self):
+        self._mis.stop()
+        import data.esun_provider as P
+        P._quote_missing.clear()
 
     def test_timeout_then_success_returns_price(self):
         import requests
@@ -240,6 +263,144 @@ class QuoteRetryTest(unittest.TestCase):
         p, stub = self._provider([{'lastPrice': 50.0}])
         self.assertEqual(p.get_current_price('1802'), 50.0)
         self.assertEqual(stub.calls, 1)
+
+
+class QuoteRecoveryNoticeTest(unittest.TestCase):
+    """缺價 → 恢復時印**一行**（v1.1.41，2026-11-16）。
+
+    事故形狀（VM 實測）：2408 每天 09:00 開盤首圈逾時一次、下一圈恢復；但**成功的報價不落紀錄**
+    ⇒ 只能靠「沒有第二筆 ⚠️」反推，而 `get_current_price` 還有兩條靜默回 0 的路徑
+    （`_ensure_available()` 為 False、回應沒有 `lastPrice`）⇒ 沒辦法回答「後來到底查到沒有」。
+    做法：只印恢復那一行（正常盤零輸出、不洗版）。
+    """
+
+    def setUp(self):
+        import data.esun_provider as P
+        self.P = P
+        P._quote_missing.clear()
+        # v1.1.42：MIS 備援關掉（回空 dict）才驗得到「恢復」這條純玉山路徑
+        self._mis = patch('core.inst_data.fetch_intraday_quotes', return_value={})
+        self._mis.start()
+
+    def tearDown(self):
+        self._mis.stop()
+        self.P._quote_missing.clear()
+
+    def _call(self, side_effects):
+        """回傳 (價格, stdout)；side_effects 用完就用預設成功值。"""
+        p, stub = _make_provider(side_effects)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            px = p.get_current_price('1802')
+        return px, buf.getvalue(), stub
+
+    def test_no_line_when_always_ok(self):
+        px, out, _ = self._call([{'lastPrice': 50.0}])
+        self.assertEqual(px, 50.0)
+        self.assertNotIn('報價已恢復', out, '沒有缺過價就不該印')
+
+    def test_line_printed_when_price_comes_back(self):
+        import requests
+        p, stub = _make_provider([requests.exceptions.ReadTimeout('t1'),
+                                  requests.exceptions.ReadTimeout('t2'),
+                                  {'lastPrice': 123.5},
+                                  {'lastPrice': 124.0}])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(p.get_current_price('1802'), 0.0)   # 兩次逾時 ⇒ 缺價
+            self.assertIn('1802', self.P._quote_missing)
+            self.assertEqual(p.get_current_price('1802'), 123.5)  # 下一圈恢復
+            self.assertEqual(p.get_current_price('1802'), 124.0)  # 之後正常
+        out = buf.getvalue()
+        self.assertEqual(out.count('報價已恢復'), 1, '恢復只印一次，不可每圈重印')
+        self.assertIn('✅ 1802 報價已恢復（123.50，缺價', out)
+        self.assertEqual(self.P._quote_missing, {}, '恢復後狀態要清掉')
+
+    def test_zero_price_is_not_a_recovery(self):
+        """回應沒有 `lastPrice` ⇒ 回 0，看起來像「成功」但其實還是沒價。"""
+        import requests
+        p, _ = _make_provider([requests.exceptions.ReadTimeout('t1'),
+                               requests.exceptions.ReadTimeout('t2'),
+                               {'lastPrice': 0}])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(p.get_current_price('1802'), 0.0)
+            self.assertEqual(p.get_current_price('1802'), 0.0)
+        self.assertNotIn('報價已恢復', buf.getvalue())
+        self.assertIn('1802', self.P._quote_missing, '沒有正價格 ⇒ 仍算缺價')
+
+    def test_non_network_error_also_leaves_a_mark(self):
+        p, _ = _make_provider([ValueError('A00002 response parse Error'),
+                               {'lastPrice': 77.0}])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(p.get_current_price('1802'), 0.0)
+            self.assertEqual(p.get_current_price('1802'), 77.0)
+        self.assertIn('✅ 1802 報價已恢復（77.00', buf.getvalue())
+
+    def test_retry_success_prints_recovery_line(self):
+        """⚠️ 之後**重試就成功**（每天 09:00 的形狀）也要留下「已恢復」的正面證據。
+
+        2026-11-17：v1.1.41 只記「兩次都失敗」，於是這種最常見的形狀一句 ✅ 都不會印——
+        VM 上只能靠「沒有 ❌」反推（當天 09:00:12／09:00:24 兩檔真實案例）。
+        """
+        import requests
+        px, out, stub = self._call([requests.exceptions.ReadTimeout('t1'),
+                                    {'lastPrice': 109.5}])
+        self.assertEqual(px, 109.5)
+        self.assertEqual(stub.calls, 2, '仍只重試一次')
+        self.assertIn('⚠️ 1802 報價逾時／斷線，第 1/1 次重試', out)
+        self.assertIn('✅ 1802 報價已恢復（109.50，缺價', out)
+        self.assertEqual(self.P._quote_missing, {}, '恢復後狀態要清掉，不可留在缺價名單')
+
+
+class QuoteDiagnosticTimestampTest(unittest.TestCase):
+    """報價診斷行要有**台北時間**前綴（2026-11-17 使用者要求）。
+
+    為什麼：這些 print 原本沒有時間戳，貼出來的 log 看起來永遠像「啟動就出事」——
+    11/16 與 11/17 兩次都得回頭跑 `docker logs -t`（UTC）再換算成台北時間才敢下結論。
+    """
+
+    PAT = r'^\[\d{2}:\d{2}:\d{2}\] '
+
+    def setUp(self):
+        import data.esun_provider as P
+        self.P = P
+        P._quote_missing.clear()
+        self._mis = patch('core.inst_data.fetch_intraday_quotes', return_value={})
+        self._mis.start()
+
+    def tearDown(self):
+        self._mis.stop()
+        self.P._quote_missing.clear()
+
+    def test_tpe_ts_is_utc_plus_8(self):
+        from datetime import datetime, timedelta, timezone
+        s = self.P._tpe_ts()
+        self.assertRegex(s, r'^\d{2}:\d{2}:\d{2}$')
+        self.assertEqual(s, datetime.now(timezone(timedelta(hours=8))).strftime('%H:%M:%S'))
+
+    def test_retry_line_has_prefix(self):
+        import requests
+        p, _ = _make_provider([requests.exceptions.ReadTimeout('t1'),
+                               {'lastPrice': 109.5}])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            p.get_current_price('1802')
+        lines = [l for l in buf.getvalue().splitlines() if l.strip()]
+        self.assertTrue(lines)
+        for ln in lines:
+            self.assertRegex(ln, self.PAT, f'這行沒有台北時間前綴：{ln}')
+
+    def test_failure_and_recovery_lines_have_prefix(self):
+        import requests
+        p, _ = _make_provider([requests.exceptions.ReadTimeout('t1'),
+                               requests.exceptions.ReadTimeout('t2'), {}])
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            p.get_current_price('1802')                    # 兩次都失敗 ⇒ ⚠️ + ❌
+        for ln in [l for l in buf.getvalue().splitlines() if l.strip()]:
+            self.assertRegex(ln, self.PAT, f'這行沒有台北時間前綴：{ln}')
 
 
 if __name__ == '__main__':

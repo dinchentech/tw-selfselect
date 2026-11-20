@@ -30,6 +30,9 @@ from core.live_utils import get_next_market_open as _next_market_open, resolve_f
 # 整股（board lot）規則的單一出處（2026-11-09，v1.1.36）：買單 sizing 完成後先對齊，
 # 金額／額度檢查才看得到「券商進位後真正會花掉多少」。見 core/lots.py 的停泊超支事故說明。
 from core.lots import board_lot_qty, fit_buy_qty, sell_lot_qty
+# 硬停損規則與回測**共用同一支函式**（2026-11-20，v1.1.44）：`stop_hit`／`stop_loss_env`
+# 原本只有回測在用，實盤沒有任何停損 ⇒ 見模組下方 `stop_loss_pct_now()` 的說明。
+from core.backtest_rules import stop_hit, stop_loss_env
 import sys
 
 # ── 網路呼叫預設 timeout（避免主迴圈卡死）──────────────────────────────
@@ -85,6 +88,38 @@ def start_watchdog():
         os._exit(1)
   threading.Thread(target=_wd, daemon=True).start()
   print(f'🐕 watchdog 已啟動（> {_STALL_EXIT_SEC:.0f}s 無進展則重啟）')
+
+
+# ── 實盤硬停損（2026-11-20，v1.1.44）──────────────────────────────────────
+# 為什麼要有：`core.backtest_rules.stop_hit()` 從 2026-09-16 就存在，但**只有回測在用**，
+#   實盤這條路徑完全沒有停損 ⇒ 2026-11-18 查到的實例：2408 608 股 @ 411、11/18 收 325（−20.9%）、
+#   11/20 開盤 276.50（−32.7%，約 −82k），而鎖定的 Bollinger 反轉要「收盤 > 上軌 且 RSI > 70」
+#   才給賣訊 ⇒ 一路陰跌**結構上永遠不會出場**。同理 0050 停泊也是靠停泊釋出不看損益。
+# 口徑刻意與回測**同一支函式、同一個旋鈕**（`STOP_LOSS_PCT`，0＝停用）：
+#   判定＝現價 ≤ 均價 ×(1−pct%)、全數出場；只在 13:25–13:30 收盤前窗口判定
+#   （回測是「當日收盤判定、以收盤價成交」）。
+# 預設 0 ⇒ **未設定的環境行為與 v1.1.43 完全相同**（安全預設：換版本身不動任何倉位）。
+def stop_loss_pct_now() -> float:
+  """目前生效的硬停損百分比（0＝停用）。每次呼叫都讀 env ⇒ `.env` 熱重載後立刻生效。"""
+  return stop_loss_env('STOP_LOSS_PCT', 0.0)
+
+
+def avg_entry_cost(stock_alloc, symbol):
+  """該檔**現有部位**的加權均價（分帳本 `total_buy_cost ÷ total_buy_shares`）。
+
+  為什麼用分帳本而不是 holdings：`logs/holdings.json` 只記股數。分帳本在賣出時按比例扣減
+  （`core.live_utils.sell_stock_allocation`）⇒ 拿到的就是「現在還持有的那些股」的成本，
+  與賣出路徑算 `avg_cost` 用的是同一個來源（見主迴圈 PROFIT_MARGIN 那段）。
+  沒有帳本／股數 0／值壞掉 ⇒ 回 0.0（呼叫端視為「沒有成本基礎」，不做停損）。
+  """
+  try:
+    entry = (stock_alloc or {}).get(symbol) or {}
+    shares = int(entry.get('total_buy_shares', 0) or 0)
+    if shares <= 0:
+      return 0.0
+    return float(entry.get('total_buy_cost', 0) or 0) / shares
+  except (TypeError, ValueError, AttributeError):
+    return 0.0
 
 
 def book_price(order_ret, decision_px, label=''):
@@ -510,6 +545,11 @@ def main():
       print(f'⚠️ 停泊釋出失敗（不影響其他交易）：{e}')
       return 0.0
 
+  # 2026-11-18（v1.1.43）：停泊「額度≠現金」診斷行的去重狀態。
+  #   VM 實況：13:25–13:30 每 60 秒一圈各印一次、內容幾乎相同（每天 5–6 行 `🅿️ 停泊額度 … 受限於可用現金 0`），
+  #   而且 SKIP 不寫 `last_park_ts` ⇒ 每圈都會重新走到這裡。改成「每天每檔只印第一次」
+  #   （key 含日期 ⇒ 隔天會再印；行程重啟後 memory 歸零，最多多印一行，可接受）。
+  _park_cash_short_state = {}
   def park_idle_if_due():
     """名單建倉完成後，把閒置資金停泊到 SELFSELECT_PARK_ASSET（預設關閉）。
 
@@ -559,7 +599,9 @@ def main():
         print(f'⚠️ 停泊：現金估算失敗（保守視為 0）：{_ce}')
         _cash_now = 0.0
       if _cash_now < idle:
-        print(f'🅿️ 停泊額度 {idle:,.0f} 受限於可用現金 {_cash_now:,.0f}（額度≠現金）')
+        if should_emit_idle_notice(_park_cash_short_state,
+                                   f'park_cash_short:{sym}:{datetime.now().strftime("%Y-%m-%d")}'):
+          print(f'🅿️ 停泊額度 {idle:,.0f} 受限於可用現金 {_cash_now:,.0f}（額度≠現金）')
         idle = _cash_now
       px = broker.get_current_price(sym)
       n = _shares(idle, px)
@@ -687,6 +729,7 @@ def main():
   _overheat_notified = {}     # {symbol: 'YYYY-MM-DD'} 買入過熱被擋的 TG 去重（每日一次，2026-11-02）
   _unknown_notified = {}      # {symbol: 'YYYY-MM-DD'} 「下單結果未明」相關 TG 去重（每日一次，2026-10-19）
   _buy_fill_notified = {}     # {symbol: 'YYYY-MM-DD'} 買入未補足 TG 警示去重（每日一次）
+  _stop_notified = {}         # {symbol: 'YYYY-MM-DD'} 硬停損觸發的 log／TG 去重（每日一次，2026-11-20）
   today_str_init = datetime.now().strftime('%Y-%m-%d')
   if (daily_symbol_trades_date != today_str_init):
     daily_symbol_trades = {}
@@ -1157,6 +1200,31 @@ def main():
                   signal = 0
             if (signal == 0):
               continue
+          # ── 實盤硬停損（2026-11-20，v1.1.44；說明見模組層 `stop_loss_pct_now`）──────
+          # 位置刻意在「策略訊號之後、下單之前」：停損是**最後一道**且會覆蓋策略訊號，
+          # 但走的仍是同一條下單路徑（整股對齊／風控／成交確認／帳本／通知），不另寫一套下單邏輯。
+          #   · 只在 13:25–13:30 窗口判定 ⇒ 與日K策略同口徑（keep_wait 也一樣，不會盤中亂賣）
+          #   · 判定價＝本圈 px（=acd 最新收盤=現價），與回測「收盤價判定」一致
+          #   · 觸發＝全數出場；`_stop_exit` 讓下面 PROFIT_MARGIN 的防 churn 門檻不要擋停損
+          #     （PROFIT_MARGIN 是「小額別賣」的防手續費機制，不是風控 ⇒ 停損必須穿過它）
+          _stop_exit = False
+          _stop_pct = stop_loss_pct_now()
+          if _close_order_window and (_stop_pct > 0):
+            _held_stop = int(holdings.get(symbol, 0) or 0)
+            _entry_stop = avg_entry_cost(stock_alloc, symbol)
+            if (_held_stop > 0) and stop_hit(px, _entry_stop, _stop_pct):
+              _thr_stop = _entry_stop * (1 - (_stop_pct / 100.0))
+              signal = -1
+              position_size = _held_stop
+              _stop_exit = True
+              print(f'🛑 {symbol} 觸發硬停損 −{_stop_pct:g}%：現價 {px:.2f} ≤ 均價 {_entry_stop:.2f}'
+                    f'×(1−{_stop_pct:g}%)={_thr_stop:.2f} ⇒ 全數出場 {_held_stop} 股')
+              if (_stop_notified.get(symbol) != today_str):
+                _stop_notified[symbol] = today_str
+                send_telegram_message(
+                  f'🛑 *{escape_md(symbol)}* 觸發硬停損 −{_stop_pct:g}%\n'
+                  f'現價 {px:.2f} ≤ 均價 {_entry_stop:.2f} ×(1−{_stop_pct:g}%) = {_thr_stop:.2f}\n'
+                  f'⇒ 全數出場 {_held_stop} 股（不看策略賣訊）')
           if (signal != 0):
             action = ('BUY' if (signal == 1) else 'SELL')
             if ((action == 'BUY') and (sn != 'keep_wait') and entry_overheat_reject(acd)):
@@ -1246,7 +1314,9 @@ def main():
                 if (owned > 0):
                   print(f'⚠️  {symbol} 持有 {owned} 股，不足賣出 {position_size} 股，跳過')
                 continue
-            if ((PROFIT_MARGIN > 0) and (action == 'SELL')):
+            # ⚠️ 2026-11-20（v1.1.44）：硬停損**不套用**這個門檻。PROFIT_MARGIN 是「小額別賣、
+            #   省手續費」的防 churn 機制，不是風控；停損是風控 ⇒ `_stop_exit` 時直接放行。
+            if ((PROFIT_MARGIN > 0) and (action == 'SELL') and (not _stop_exit)):
               alloc_data = stock_alloc.get(symbol, {})
               sell_shares = alloc_data.get('total_buy_shares', 0)
               sell_cost = alloc_data.get('total_buy_cost', 0.0)

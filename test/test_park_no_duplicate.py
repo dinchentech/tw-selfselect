@@ -29,6 +29,7 @@ VM log（v1.1.21、2026-11-03/04）：
 import ast
 import os
 import sys
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -171,6 +172,48 @@ class TestLoadStateReturnsTs(unittest.TestCase):
         body = ast.get_source_segment(src, fn) or ""
         self.assertIn("last_park_ts", body,
                       "load_state() 不回 last_park_ts ⇒ 停泊的 5 分鐘防重複是死碼")
+
+
+class TestParkCashShortNotice(unittest.TestCase):
+    """2026-11-18（v1.1.43）：`🅿️ 停泊額度 … 受限於可用現金` 每天每檔只印一次。
+
+    為什麼：13:25–13:30 是每 60 秒一圈，SKIP 不寫 `last_park_ts` ⇒ 現金不足時每圈都會重印
+    （VM 11/17、11/18 各 5／6 行同字），把真正的事件擠出 `docker logs --tail 50`。
+    修法是套 `should_emit_idle_notice()` 去重（key 含日期 ⇒ 跨日會再印；行程重啟最多多印一行）。
+    """
+
+    def _dedupe_call(self):
+        body = _park_func_source()
+        tree = ast.parse(textwrap.dedent(body))
+        calls = [n for n in ast.walk(tree)
+                 if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "should_emit_idle_notice"]
+        self.assertEqual(len(calls), 1, "現金不足診斷行必須（且只能）用一個 should_emit_idle_notice 去重")
+        return tree, calls[0], body
+
+    def test_cash_short_print_is_inside_dedupe(self):
+        tree, _call, body = self._dedupe_call()
+        self.assertIn("受限於可用現金", body, "診斷行本身不能被刪掉（要留下正面證據）")
+        guarded = False
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.If):
+                continue
+            test = node.test
+            if not (isinstance(test, ast.Call) and getattr(test.func, "id", "") == "should_emit_idle_notice"):
+                continue
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Call) and getattr(sub.func, "id", "") == "print":
+                    for arg in sub.args:
+                        for const in ast.walk(arg):
+                            if (isinstance(const, ast.Constant) and isinstance(const.value, str)
+                                    and "受限於可用現金" in const.value):
+                                guarded = True
+        self.assertTrue(guarded, "現金不足的 print 必須被 should_emit_idle_notice 包住（v1.1.43）")
+
+    def test_dedupe_key_contains_date(self):
+        """key 必須含日期：否則第一次印過之後，隔天就永遠不再印。"""
+        _tree, call, body = self._dedupe_call()
+        seg = ast.get_source_segment(textwrap.dedent(body), call) or ""
+        self.assertIn("%Y-%m-%d", seg, "去重 key 必須帶當天日期（每天可印一次，不是整個行程一次）")
 
 
 if __name__ == "__main__":
