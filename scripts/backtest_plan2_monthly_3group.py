@@ -157,6 +157,12 @@ REBAL_MONTHS = max(1, int(os.getenv("REBAL_MONTHS", "1")))
 #       閒置金額每天重算 ⇒ 獲利自動滾入（複利）。
 IDLE_CASH_ASSET = os.getenv("IDLE_CASH_ASSET", "0050").strip()   # 預設停泊 0050；要關掉請設空字串
 PARK_COST = float(os.getenv("PARK_COST", "0.002"))     # 停泊部位的換手成本（年化）
+# 2026-11-23（實盤 v1.1.45 A+C 對齊）：`PARK_MA200=1` ⇒ 只有「加權指數 > MA200」時才停泊；
+#   跌破年線時閒置資金留現金（＝實盤 A 不買 0050 ＋ C 釋出既有停泊部位）。預設 0＝舊行為不變。
+PARK_MA200 = os.getenv("PARK_MA200", "0").strip().lower() in ("1", "true", "yes", "on")
+# 2026-11-24：breakout 出場確認變體（見 strategies/breakout.py 模組說明）
+BREAKOUT_CONFIRM_DAYS = int(os.getenv("BREAKOUT_CONFIRM_DAYS", "0") or 0)
+BREAKOUT_MA_CONFIRM = os.getenv("BREAKOUT_MA_CONFIRM", "0").strip().lower() in ("1", "true", "yes", "on")
 MARKET_FILTER = os.getenv("MARKET_FILTER", "0").strip().lower() in ("1", "true", "yes", "on")
 MF_WINDOW = int(os.getenv("MF_WINDOW", "200"))       # 年線視窗（交易日）
 LEVERAGE = max(0.0, float(os.getenv("LEVERAGE", "1")))
@@ -236,7 +242,8 @@ def _caliber_suffix() -> str:
                        top_n=TOP_N, fixed_n=len(POOL_FIXED) if POOL_FIXED else 0,
                        leverage=LEVERAGE, scale_to_util=SCALE_TO_UTIL,
                        market_filter=MARKET_FILTER, mf_window=MF_WINDOW,
-                       idle_cash_asset=IDLE_CASH_ASSET, fill_mode=FILL_MODE,
+                       idle_cash_asset=IDLE_CASH_ASSET, park_ma200=PARK_MA200,
+                       bo_confirm=BREAKOUT_CONFIRM_DAYS, bo_ma=BREAKOUT_MA_CONFIRM, fill_mode=FILL_MODE,
                        scoring_model=SCORING_MODEL, factor_revenue=FACTOR_REVENUE,
                        max_per_sector=MAX_PER_SECTOR, delisted=include_delisted(),
                        pool_n=POOL_N, strat_mode=STRAT_MODE)
@@ -1195,9 +1202,14 @@ def run_group(gkey, leverage=None):
         deployed_hist[dts] = _inv
         alloc_hist[dts] = _inv + sum(bucket.values())
         if IDLE_CASH_ASSET:
-            _idle = equity(dts) - _inv                     # 現金＋已分配未買的額度
-            park_hist[dts] = max(0.0, _idle)
-            park_prev[0] = max(0.0, _idle)
+            _idle = max(0.0, equity(dts) - _inv)           # 現金＋已分配未買的額度
+            # 2026-11-23：PARK_MA200=1 ⇒ 大盤跌破年線時**留現金、不押 0050**（實盤 A＋C）。
+            #   隔日 park_prev 為 0 ⇒ 不再吃 0050 報酬（等同把停泊部位釋出）；
+            #   年線之下買進本來就被 MARKET_FILTER 擋住 ⇒ 現金會一直留著，回升後自動恢復停泊。
+            if PARK_MA200 and above_ma200(IDX_CLOSE, dts, MF_WINDOW) is False:
+                _idle = 0.0
+            park_hist[dts] = _idle
+            park_prev[0] = _idle
             _PARK_PREV_DATE[0] = dts
 
     curve = pd.Series(curve).sort_index()
@@ -1472,6 +1484,8 @@ def main():
            "leverage": LEVERAGE, "scale_to_util": SCALE_TO_UTIL, "margin_rate": MARGIN_RATE,
            "market_filter": MARKET_FILTER, "mf_window": MF_WINDOW, "mf_source": MF_SOURCE,
            "idle_cash_asset": IDLE_CASH_ASSET or None, "park_cost": PARK_COST,
+           "park_ma200": PARK_MA200, "breakout_confirm_days": BREAKOUT_CONFIRM_DAYS,
+           "breakout_ma_confirm": BREAKOUT_MA_CONFIRM,
            "momentum_days": MOM_DAYS, "inst_confirm": INST_CONFIRM, "inst_days": INST_DAYS,
            "min_draw_back": MIN_DRAW_BACK, "strat_mode": STRAT_MODE, "swap_mode": SWAP_MODE,
            "overheat": OVERHEAT, "oh_max_from_high": OH_MAX_FROM_HIGH, "oh_max_ytd": OH_MAX_YTD,

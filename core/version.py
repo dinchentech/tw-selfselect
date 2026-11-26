@@ -9,14 +9,12 @@
 
 ## 版本沿革
 
-> **線上部署狀態（2026-11-20 09:50）**：VM `tw_selfselect_bot` 目前跑 **v1.1.43**
-> （banner `build 2026-11-18 14:15:18／指紋 97072146`，11/18 14:25:43 部署、與本機 `build_info()` 逐位一致）
-> ⇒ 11/19（第一個完整交易日）驗收通過：13:25–13:30 只出現 **1 行**
-> `🅿️ 停泊額度 80,454 受限於可用現金 0（額度≠現金）`（11/17／11/18 各 5／6 行同字）。
-> **v1.1.44 尚未部署**（實盤硬停損 `STOP_LOSS_PCT`，預設 0＝停用 ⇒ 換版本身不動任何倉位），
-> `deploy_source.sh` 由使用者手動執行；部署後 banner 的建置時間／指紋會一併變動，可據此確認換版成功。
-> ⚠️ `.env` **不隨部署同步**（`deploy_source.sh` 會保留 VM 上既有的 `.env`）⇒ 要真的啟用停損，
-> 必須另外在 VM 的 `.env` 加 `STOP_LOSS_PCT=10`（或你決定的百分比）並重啟容器。
+> **線上部署狀態（2026-11-23 更新）**：VM `tw_selfselect_bot` 目前跑 **v1.1.45**
+> （banner `build 2026-11-23 10:41:08／指紋 24da234c`，使用者 11/23 10:57 手動部署；A+B+C 閘門當天即驗收）。
+> **v1.1.54 尚未部署**（`reset_paper_trading` 清單補上停泊／待對帳狀態檔）；
+> `deploy_source.sh` 一律由使用者手動執行。
+> ⚠️ `.env` **不隨部署同步**（`deploy_source.sh` 會保留 VM 上既有的 `.env`）⇒ A/C 閘門預設就開，
+> 不需要加任何設定；要關閉才需要在 VM 的 `.env` 加 `PARK_MARKET_FILTER=false` 並重啟容器。
 
 - `1.0.0`（2026-08）由 tw-autotrader v4.54 的自選股腿拆出後重新起版。
 - `1.1.0`（2026-10-29）AI 選股模式（`SELFSELECT_AI`，D1 手動／逾期 fallback）＋ zscore 評分器（`SELFSELECT_SCORING_MODEL`，預設）
@@ -26,6 +24,124 @@
   依使用者裁定「**非程式本身的變更不要動版號**」**撤回**，程式版本回到 `1.1.3`。
   教材／文件／`.env`／cache／報告 JSON 的變更一律不升版號；只有 `core/`、`scripts/`、`strategies/`、`data/`、`utils/`、
   `selfselect_trader.py` 這類執行期程式的修改才 +1。
+- `1.1.54`（2026-11-26）**「從零重來」補清停泊帳與待對帳**（`scripts/reset_paper_trading.py` 的 `STATE_FILES`）。
+  背景：模擬帳 11/09 起多次「送單全記、實際半成」累積出隱性槓桿（11/26 實測持股成本 617,555 ＋ 停泊 825,575
+  ＝ 1,443,130 > 本金 100 萬，`cash_available` 永遠 0）；但 `STATE_FILES` 原本**沒有**停泊檔案
+  ⇒ 跑完重置後 `park_position.json` 還留著 9,000 股、帳面照樣超額。現補上
+  `park_position.json`／`park_trades.jsonl`／`park_plan.json`／`stock_pending.json`／`entry_attempts.json`。
+  測試：`test/test_reset_paper_trading.py`（清單必須涵蓋停泊與待對帳）。
+- `1.1.53`（2026-11-25）**自選股賣出也接「成交未確認 ⇒ 待對帳」佇列**（停泊那套推廣，v1.1.52 的延伸）。
+  背景：策略賣出／硬停損與停泊走同一條 `resolve_fill()`；回 `None` 時帳本照送單股數記「全額賣出」，
+  實際只成一部分 ⇒ `holdings` 與分帳本**多扣**、`fit_cash()` 的可用現金**高估**（真錢上會交割不足）。
+  做法：① 新增 `core/stock_pending.py`（`logs/stock_pending.json` 佇列；`load/save/record`、
+  `unverified_sell_value()`、`apply_deltas()`）；② 賣單記帳處：`action=='SELL'` 且 `_filled is None`
+  ⇒ 記一筆待對帳並印 `🧾 … 賣出成交未確認 ⇒ 已記錄待對帳`；③ `fit_cash()` 把「停泊＋自選股」未確認的
+  賣出金額一起扣掉；④ 新增 `_reconcile_stock_pending()`：下單窗口內、策略迴圈**之前**收斂——
+  **當天**用即時庫存 `qty_sm`、**隔天**用快照 `transactions`，把沒賣掉的股數與成本加回 `holdings`／分帳本，
+  並發 TG；`performance.csv` 那列仍留原值（隔天由 `core.broker_sync`／`broker_shortfall_repair` 正式修）。
+  測試：`test/test_stock_pending.py` 11 支。
+- `1.1.52`（2026-11-25）**停泊當日即時對帳 ＋ 未確認回款不得計入可用現金**（真錢風險修正）。
+  背景（11/25 事故的延伸）：C 釋出 6,000 股只成交 1,000，帳本當天記全額 ⇒ `cash_available()` 把 541,800
+  的回款算成現金（實際只進 90,081）⇒ 同一天若有股票買訊，真錢上是**交割款不足（違約）**。
+  ① `park_asset.unverified_sell_value()`：`pending_verifies` 裡未確認的 SELL 金額合計；
+  `cash_available(..., unverified_proceeds=…)` 直接扣掉 ⇒ `fit_cash()`（所有買單）與停泊自己的現金估算都保守。
+  ② **當日即時對帳**：`_reconcile_park_pending()` 對「pending 日期＝今天」的項目，先用券商**即時庫存**
+  （`qty_bm`／`qty_sm`）修正（不必等 13:45 快照）；此時**不傳 snapshot**（空快照會被判成 0 股成交）。
+  ③ C 閘門：**今天已釋出過就不再重送**（部分成交後每 60 秒重送會洗版；剩餘股數隔天由 pending 收斂加回後再賣）。
+  測試：`test/test_park_same_day.py` 11 支（未確認回款、佇列相容、即時庫存部分／全額、盤面缺該檔仍等、
+  `fit_cash`／停泊現金／C 閘門的原始碼守門）。
+- `1.1.51`（2026-11-25）**停泊閘門三個缺陷修正**（v1.1.48 的即時閘門實戰第一天就踩到）。**交易行為變更。**
+  11/25 實況（VM log）：13:25 C 釋出 6,000 股 0050 @ 90.30（券商**只成 1,000**）⇒ 13:26–13:30 每圈印
+  `停泊待對帳` ＋`依 A 留現金`（各 5 次）⇒ **13:30 突然買回 4,000 股 @ 90.30**（同價來回、白付費稅約 1,800）。
+  ① **未知不得動作**：`is_above_ma200_live()` 取不到即時指數時，舊版退回**昨收**（11/24 的 40,1xx 在年線上）
+  把 38,090<39,092 的判斷翻成「可停泊」；改為回 `None`＝未知，A/C 都**不動作**（C 只在明確 `False` 才釋出、
+  A 只在明確 `True` 才放行）；並讓 `index_now()` 失敗時優先用**當天稍早的即時值**（≤30 分），不拿昨收當今天。
+  ② **當日已釋出 ⇒ 當天不買回**（`park_asset.released_today()`）：B 閘門的擴充，直接堵住同價來回 churn。
+  ③ **待對帳改佇列**（`pending_verifies: [...]`，舊單一欄位相容）：11/25 先 SELL 6,000、後 BUY 4,000，
+  買進那筆把賣出的待對帳**蓋掉** ⇒ 少對 5,000 股。另修 `_park_notice_once()`（**多槽**去重）——
+  `should_emit_idle_notice()` 是單槽，兩個 key 交替會互相踩掉、每圈重印（11/25 的 5 重複行就是這樣）。
+  ⚠️ 真錢風險（未修，已記 LOG）：C 釋出若只部分成交，帳本當天仍記全額賣出 ⇒ `cash_available` 高估，
+  當天若有股票買訊可能**交割款不足**。目前靠 ② 的「當日不買回」緩解，長期要靠當日即時對帳。
+  測試：`test_park_gates.py`＋`test_park_pending_verify.py`＋`test_market_filter_live.py`（共 123 支）。
+- `1.1.50`（2026-11-24）**breakout 出場確認旋鈕**（`BREAKOUT_CONFIRM_DAYS`／`BREAKOUT_MA_CONFIRM`，
+  **預設 0／關閉 ⇒ 行為與 v1.1.49 完全相同**，換版本身不動任何部位）。
+  起因：2603 於 11/20 依規則出場（236.00 跌破 20 日低點 236.50、−14.9%），之後 11/23 收 241、11/24 收 257
+  ⇒ 使用者問「單日跌破就出」是不是太急，要求回測兩個變體：
+  ① `BREAKOUT_CONFIRM_DAYS=2`：**連續 2 日**收盤都在各自前 20 日低點之下才賣（第 2 天才出場）。
+  ② `BREAKOUT_MA_CONFIRM=1`：跌破前低**且**收盤 < MA20 才賣。
+  實作：`strategies/breakout.py` 內以 `.env` 旋鈕讀取（呼叫時讀 ⇒ 熱重載有效），回測與實盤共用同一支。
+  **回測結果（2022-01-01~2026-10-23、A+C 停泊口徑）**：變體 2 **逐位等於基準**（數學上是 no-op：
+  收盤 < 前 20 日最低 ⇒ 必然 < MA20）；變體 1 總報酬 **+283.11% → +303.58%**、夏普 **1.30 → 1.35**、
+  MDD −22.82% → −22.98%（幾乎不變）。要啟用只需在 `.env` 設 `BREAKOUT_CONFIRM_DAYS=2`（不需再改程式）。
+  測試：`test/test_breakout_exit_confirm.py` 7 支（基準／連 2 日／非連續不觸發／不早於基準／壞值回基準／
+  MA 確認等價性／truthy 字串）；`caliber_tag` 加 `_bo2`／`_boma` 後綴避免覆蓋。
+  ⚠️ 同日補：`scripts/walk_forward.py` 的快取鍵 `_CACHE_KNOBS` 加入 `PARK_MA200`／`BREAKOUT_CONFIRM_DAYS`／
+  `BREAKOUT_MA_CONFIRM`（否則兩個完整口徑會撞同一個快取檔、沿用舊結果——2026-10-31 `Z_OVERHEAT` 踩過同一個坑）。
+  注意：這會讓既有 `results/walk_forward/cache/` 全部失效（檔名帶旋鈕值），下次 WF 一定重跑。
+- `1.1.49`（2026-11-24）**停泊即時閘門的診斷行每天只印一次**（純診斷，交易行為與 v1.1.48 相同）。
+  背景：`is_above_ma200_live()` 在 13:25–13:30 每圈會被呼叫兩次（C 閘門＋A 閘門），
+  每次都會印一行 `📈 大盤過濾（停泊·即時）…` ⇒ 一天累積 10 行以上重複（與 v1.1.43 修的
+  `🅿️ 停泊額度 …` 洗版同一類）。做法：`_log_live_once()` 每天第一次才印（跨日重置、重啟最多多一次）。
+  測試：`test/test_market_filter_live.py` +2 支（同一天只印一次、跨日會再印）。
+- `1.1.48`（2026-11-24）**停泊閘門改用當日即時指數**（使用者裁定）。**這是交易行為的變更。**
+  背景：A/C 原本跟自選股買進共用 `is_above_ma200()`（TWSE FMTQIK 的**前一日收盤**，當日列要收盤後才有）
+  ⇒ 跳空日會慢一天。2026-11-24 實例：台股 +9.0%、0050 漲停 95.70，但 13:25 的 A/C 只看到 11/23 收盤
+  36,811（< MA200 38,984）⇒ 會把停泊賣在漲停、隔天再買回（來回成本 + 追高）。
+  做法：`core.market_filter` 新增 `index_now()`（TWSE MIS 即時加權指數 `t00`，60 秒 TTL）與
+  `is_above_ma200_live()`（**日K MA200 × 即時指數**）；`selfselect_trader._park_market_ok()` 改用它
+  ⇒ A/C 兩個閘門同時生效。日K 序列與 MA200 按日快取（`self._df`／`_df_date`，原本每次重抓 15 次 TWSE）。
+  取不到即時指數（MIS 掛掉／非交易時段）⇒ **退回日K收盤**（＝舊行為），不擋停泊。
+  **刻意不動**：自選股買進仍走 `is_above_ma200()`（日K、與回測同口徑）；回測無法用即時指數
+  ⇒ 實盤/回測在「停泊閘門用哪個價」上分岔，這條落差已記進 `cairn/selection-mix-and-parking.md`。
+  測試：`test/test_market_filter_live.py` 8 支（跳空日不賣、即時在線下照擋、即時取不到退回日K、
+  資料不足不擋、日K版行為不變、TTL 快取、trader 只用即時版於停泊）。
+- `1.1.47`（2026-11-23）**停泊收斂語意修正**：快照檔存在且沒有錯誤時，**空紀錄＝這筆真的沒成交**。
+  背景（v1.1.46 上線後推演出來的洞）：11/23 的券商快照 `transactions／inventories／settlements` 全空，
+  而 v1.1.46 的 `reconcile_pending()` 在「查不到成交」時只會 `keep`（明天再試）⇒ 若隔天快照又是空的（模擬環境常態：
+  11/10–11/19、11/23 全空），帳本會一直停在「賣出後記 0」的錯數字，5 天後 `expire` 就永久錯下去——跟 11/23 的事故同一形狀。
+  修法：`reconcile_pending(..., snapshot=)` 新增快照本身；**檔案存在且 `errors` 為空、`ok` 不為 False`
+  ⇒ 沒有該檔成交紀錄就當「0 股成交」，賣出把股數與成本加回、買進扣掉（即把 11/23 的人工修帳自動化）；
+  只有「快照檔還沒產生」或「快照本身有 API 錯誤」才 `keep` 等明天。`expire` 同時發一則 TG（原本只有 log）。
+  測試：`test/test_park_pending_verify.py` 25 支（新增 5 支：空快照＝沒成交／快照有錯仍等／無快照仍等／
+  真實 11/23 快照形狀／trader 傳 snapshot 與 expire 發 TG）。
+- `1.1.46`（2026-11-23）**停泊「成交未確認」改成隔天用券商快照收斂**＋**庫存口徑改用成交量**。
+  背景（VM 11/23 部署 v1.1.45 當天）：C 閘門在 13:26 送出 `sell 0050 4,000 股 @ 87.20`，
+  但 11/23 的券商快照 `transactions／inventories／settlements` 全空 ⇒ **實際 0 成交**，
+  而帳本照「查不到成交 ⇒ 依送單股數記帳」把停泊帳歸零；回頭對快照才發現這不是第一次：
+  **11/09 停泊釋出送 4,000 只成交 1,000**（`qty_sm=1000`）、**11/20 停泊買進送 2,000 只成交 1,000**
+  （`qty_bm=1000`）⇒ 帳本 0 股 vs 券商實際約 **6,000 股**（成本 557,250、均價 92.875）。
+  ① 送單當下仍依送單股數記帳（否則下一圈會重複下單），但把動作寫進 `park_position.json` 的
+  `pending_verify`（act／shares／price／avg／date）——`load_state()` 同步保留（原本會丟掉這個鍵）。
+  ② 下一個下單窗口先跑 `_reconcile_park_pending()`：讀當天落地的 `logs/broker_snapshot_<date>.json`，
+  先看 `transactions`（成交回報）、沒有才看 `inventories.qty_bm`／`qty_sm` ⇒ 有成交量就修正帳本
+  （賣：把沒賣掉的股數與成本加回；買：扣掉沒成交的股數與成本），並在 `park_trades.jsonl` 留一筆 `REPAIR`；
+  查不到就明天再試，連續 5 天沒有才放棄（**不得**因為「查不到」把帳本歸零）。
+  ③ `broker_holding_qty()`／`scripts/reconcile_broker_books.parse_inventories()` 的股數改**優先取 `qty_bm`**
+  （成交量），沒有才退回 `qty_b`（委託量）→ `cost_qty`：11/20 那句「券商 2,000 股」實際只有 1,000。
+  ⚠️ 真錢上線前要在真實券商資料上確認 `qty_b`／`qty_bm` 語意（已列開放問題）。
+  測試：`test/test_park_pending_verify.py` 18 支（賣出部分／零成交、買進部分成交、快照無資料 keep、
+  5 天 expire、壞 pending、`load_state` 保留、`qty_bm` 口徑、trader 接線）。
+- `1.1.45`（2026-11-23）**停泊兩道閘門「A+B」**（使用者裁定）。**這是交易行為的變更，不是純診斷。**
+  背景（11/20 實況）：13:25–13:30 breakout 把 2603 認賠出場（909 股 @ 236.00、−14.9%）後，
+  **同一圈的停泊就把回款買成 0050**（2,000 股 @ 84.40 ≈ 16.9 萬）——當時大盤正在崩跌，
+  等於「賣在低點、立刻全押另一檔也在跌的 ETF」；停泊帳本身已 −7.2%，這筆還是「越跌越買」。
+  做法：① **A**：停泊前先問大盤年線（沿用 `core.market_filter.is_above_ma200()`，加權指數 MA200）
+  ⇒ 跌破年線**不買 0050、留現金**；旋鈕 `PARK_MARKET_FILTER`（預設開、`false` 關閉）。
+  ② **B**：當天只要有一筆**自選股賣出成交**（策略賣訊／硬停損／孤兒清倉；停泊釋出不算）
+  ⇒ **當天不再停泊**，回款留現金，到**下一個交易日的下單窗口**才重新評估（仍要過 A）。
+  判斷來源是 `performance.csv`（行程重啟也不會忘記今天賣過）。
+  ③ **C**（同日追加，使用者裁定「大盤破年線就釋出停泊部位」）：跌破年線且**手上還有停泊部位**
+  ⇒ 依 `park_release_all()` **全數賣出變現**、留現金；與 A 共用同一個旋鈕，且排在「名單已建倉完成」
+  檢查**之前**（名單沒建倉也該先變現）。釋出失敗會寫 `last_park_ts` 冷卻 5 分鐘（不每圈重送）。
+  ④ A/B 閘門在「名單已建倉完成」之後、算 idle 之前；命中就 `return 0.0`（不是只印訊息）；
+  SKIP 訊息每天每檔只印一次（同 v1.1.43 去重機制），`logs/park_plan.json` 多一個 `gate` 欄位
+  （`market`／`sold`），收盤報告沿用既有 `reason` 顯示。
+  ⑤ `core.market_filter` 的結果**按日快取**（`self.cache`／`self.cache_date` 原本是死碼）——
+  A/C 每圈問一次，不快取一天多出近百次 TWSE 請求。
+  ⑥ 回測對齊：`scripts/backtest_plan2_monthly_3group.py` 新增 `PARK_MA200=1`（預設 0＝舊行為不變）——
+  只在加權指數 > MA200 時停泊（＝A＋C 的回測版；回測本來就是「昨日閒置金額」起算，賣出回款天生隔日才停泊，
+  與實盤 B 同向且更保守）。`caliber_tag()` 加 `_parkma200` 後綴，結果檔不會互相覆蓋。
+  測試：`test/test_park_gates.py`（純函式＋`park_idle_if_due` 原始碼不變式 21 支）。
 - `1.1.44`（2026-11-20）**實盤硬停損**（`STOP_LOSS_PCT`，0＝停用）。**這是交易規則的變更，不是純診斷。**
   背景（2026-11-18 追零成交時撞到）：`core.backtest_rules.stop_hit()` 從 09-16 就存在，但**只有回測在用**，
   實盤一處都沒引用 ⇒ 2408 608 股 @ 411、11/18 收 325（−21%）、11/20 開盤 276.50（−32.7%／約 −82k），
@@ -406,7 +522,7 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 
-APP_VERSION = "1.1.44"
+APP_VERSION = "1.1.54"
 
 # ── 建置標記 ─────────────────────────────────────────────────────────────
 # ⚠️ 這裡**不是**「程式啟動時間」。原本 banner 用 `datetime.now()` 當 BUILD_DATE，

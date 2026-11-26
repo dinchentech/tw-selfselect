@@ -187,8 +187,17 @@ class TestParkCashShortNotice(unittest.TestCase):
         tree = ast.parse(textwrap.dedent(body))
         calls = [n for n in ast.walk(tree)
                  if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "should_emit_idle_notice"]
-        self.assertEqual(len(calls), 1, "現金不足診斷行必須（且只能）用一個 should_emit_idle_notice 去重")
-        return tree, calls[0], body
+        # 2026-11-23（v1.1.45）更正：新增停泊 A/B 兩道閘門後，`park_idle_if_due` 內會有**第二個**
+        #   `should_emit_idle_notice`（閘門訊息去重，key＝`park_gate:…`）。本測試要釘的是
+        #   「現金不足那行」，所以改成**按 key 挑那一支**（`park_cash_short:`），
+        #   而不是要求整個函式只能有一個呼叫。
+        dedented = textwrap.dedent(body)
+        cash_short = [c for c in calls
+                      if "park_cash_short:" in (ast.get_source_segment(dedented, c) or "")]
+        self.assertEqual(len(cash_short), 1,
+                         "現金不足診斷行必須（且只能）用一個 should_emit_idle_notice 去重"
+                         "（key 需含 park_cash_short:）")
+        return tree, cash_short[0], body
 
     def test_cash_short_print_is_inside_dedupe(self):
         tree, _call, body = self._dedupe_call()

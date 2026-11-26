@@ -27,10 +27,25 @@
 ## 純函式（`test/test_park_asset.py` 釘住）
 
 `park_symbol()`／`idle_amount()`／`park_shares()`／`release_shares()`／`can_park_after_build()`／
-`is_build_attempted()`（2026-11-02 新增：今天嘗試買過但沒成交也算建倉已處理）／`enabled()`
+`is_build_attempted()`（2026-11-02 新增：今天嘗試買過但沒成交也算建倉已處理）／`enabled()`／
+`market_filter_on()`＋`sold_on()`（2026-11-23 新增：停泊「A+B」兩道閘門，見下）
+
+## 停泊三道閘門（2026-11-23 使用者裁定「A+B」＋追加「C」）
+
+背景（11/20 實況）：breakout 把 2603 認賠出場（−14.9%）後，**下一圈停泊就把回款掃進 0050**，
+當下大盤正在崩跌 ⇒ 等於「賣在低點、立刻全押另一檔也在跌的 ETF」，而且停泊帳本身已經 −7.2%。
+
+- **A `market_filter_on()`**：停泊前先看大盤年線（沿用 `core.market_filter` 的加權指數 MA200）。
+  跌破年線 ⇒ **不買 0050、留現金**；`PARK_MARKET_FILTER=false` 可關（預設開）。
+- **B `sold_on()`**：當天只要有一筆**自選股賣出成交**（策略賣訊／硬停損／孤兒清倉；停泊釋出不算），
+  當天就**不再停泊**——回款先留現金，到下一個交易日的下單窗口才重新評估（且仍要過 A）。
+- **C（追加）**：大盤跌破年線且手上還有停泊部位時，`selfselect_trader.park_idle_if_due()` 直接
+  `park_release_all()` 全數賣出變現、留現金（與 A 共用 `PARK_MARKET_FILTER`；排在「名單已建倉完成」之前）。
+  回測對應旋鈕：`PARK_MA200=1`（`scripts/backtest_plan2_monthly_3group.py`；預設 0＝舊行為不變）。
 """
 from __future__ import annotations
 
+import datetime
 import json
 import math
 import os
@@ -72,7 +87,8 @@ def idle_amount(leg_capital: float, stock_value: float, park_value: float = 0.0)
 
 
 def cash_available(total_capital: float, open_cost: float = 0.0,
-                   already_parked_cost: float = 0.0) -> float:
+                   already_parked_cost: float = 0.0,
+                   unverified_proceeds: float = 0.0) -> float:
     """可用現金（保守估計）＝ 本金 − 目前持股成本 − 已停泊成本。
 
     為什麼需要（2026-11-05）：停泊原本用 `idle_amount()`＝「腿額度 − 持股市值 − 停泊市值」，
@@ -91,9 +107,12 @@ def cash_available(total_capital: float, open_cost: float = 0.0,
         tc = float(total_capital)
         oc = float(open_cost or 0.0)
         pc = float(already_parked_cost or 0.0)
+        up = float(unverified_proceeds or 0.0)
     except (TypeError, ValueError):
         return 0.0
-    return max(0.0, tc - oc - pc)
+    # 2026-11-25（v1.1.52）：`unverified_proceeds` ＝「成交未確認的停泊賣出金額」，
+    #   保守起見**不計入可用現金**（真錢上若賣單只部分成交，這筆錢根本還沒進來）。
+    return max(0.0, tc - oc - pc - up)
 
 
 def park_shares(idle: float, price: float, min_ntd: float = MIN_PARK_NTD) -> int:
@@ -153,6 +172,226 @@ def can_park_after_build(exec_mode: str, watch_symbols, holdings: dict,
     return all(is_build_attempted(s, holdings, filled, attempted or {}, day) for s in syms)
 
 
+def market_filter_on(env=None) -> bool:
+    """停泊的 A 閘門：是否先看大盤年線（`PARK_MARKET_FILTER`，**預設開啟**）。
+
+    使用者裁定（2026-11-23）：「大盤也不好，寧可空手留現金」。實作上由呼叫端拿
+    `core.market_filter.MarketTrendFilter.is_above_ma200()` 判斷（與自選股買進同一口徑）；
+    本函式只決定「要不要問」——`PARK_MARKET_FILTER=0/false/no/off` 才關閉。
+
+    ⚠️ 刻意與 `MARKET_TREND_FILTER`（自選股買進）分開：兩者可以獨立關，
+    但預設都開；停泊擋住時**只影響停泊、不影響買股與賣股**。
+    """
+    src = os.environ if env is None else env
+    raw = src.get("PARK_MARKET_FILTER")
+    if raw is None:
+        return True
+    return str(raw).strip().lower() not in ("0", "false", "no", "off")
+
+
+def sold_on(rows, date_str: str, park_symbol: str = "") -> bool:
+    """停泊的 B 閘門：`date_str` 當天有沒有**自選股賣出成交**。
+
+    `rows` 是 `performance.csv` 的列（`core.books.read_trades()`；欄位 `timestamp`／`symbol`／`action`）。
+    只認 `action == 'SELL'` 且 `timestamp` 前 10 碼等於當天；`park_symbol`（停泊標的）本身不算——
+    停泊交易本來就不寫 `performance.csv`，這裡再排除一次是防呆。
+
+    為什麼要這條（2026-11-23 使用者裁定）：11/20 把 2603 認賠賣掉後，同一圈的停泊立刻把回款
+    買成 0050（約 16.9 萬）⇒ 「賣出後不要馬上停泊，留現金，到下一個買股窗口再判斷」。
+    壞資料一律當「沒有賣出」（不讓一個壞列把停泊永久卡住）。
+    """
+    day = str(date_str or "")[:10]
+    if not day:
+        return False
+    park = str(park_symbol or "")
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        try:
+            stamp = str(r.get("timestamp") or "")[:10]
+        except Exception:
+            continue
+        if stamp != day:
+            continue
+        if str(r.get("action") or "").strip().upper() != "SELL":
+            continue
+        if park and str(r.get("symbol") or "") == park:
+            continue
+        return True
+    return False
+
+
+def reconcile_pending(pending, tx_rows, inv_rows, today: str,
+                      max_days: int = 5, snapshot=None) -> dict:
+    """把「成交未確認」的停泊動作，用隔天落地的券商快照校正（2026-11-23，v1.1.46）。
+
+    ## 為什麼要有（2026-11-23 事故）
+
+    `resolve_fill()` 在 13:25 送單時查不到成交會回 `None`，而停泊一路走「查不到 ⇒ 依送單股數記帳」。
+    2026-11-20 的服務器實際只成交 1,000 股（`qty_bm=1000`）、帳本記 2,000；11/23 C 的釋出送 4,000 股
+    實際 0 成交、帳本照記 4,000 ⇒ 停泊帳從 4,000 一路偏到 **0**，而券商實際還有約 6,000 股。
+    ⇒ 送單當下記帳無可厚非（否則會重複送單），但**隔天一定要用券商成交紀錄收斂**。
+
+    ## 判斷順序
+
+    1. 先看快照 `transactions`（成交回報）：買＝`buy_sell=='B'`、賣＝`'S'`，符號符合 ⇒ 加總 `qty`。
+    2. `transactions` 沒有該檔 ⇒ 退回 `inventories` 的**成交量欄位**（`qty_bm`／`qty_sm`）。
+    3. 兩者都沒有 ⇒ `status='keep'`（把 pending 留著，明天再試）；超過 `max_days` 天 ⇒ `status='expire'`。
+
+    ## 回傳
+
+    `{'status': 'ok'|'keep'|'expire', 'matched': int|None, 'shares_delta': int,
+      'cost_delta': float, 'note': str}`
+
+    `shares_delta`／`cost_delta` 是**要套回帳本**的修正量（買：`matched − booked`；
+    賣：`booked − matched` 加回沒賣掉的股數，成本用當下的 `avg`）。
+    """
+    pv = pending if isinstance(pending, dict) else {}
+    act = str(pv.get("act") or "").upper()
+    sym = str(pv.get("symbol") or "")
+    try:
+        booked = int(pv.get("shares") or 0)
+        price = float(pv.get("price") or 0.0)
+        avg = float(pv.get("avg") or 0.0)
+    except (TypeError, ValueError):
+        return {"status": "expire", "matched": None, "shares_delta": 0, "cost_delta": 0.0,
+                "note": "pending_verify 欄位壞掉 ⇒ 放棄（需人工對帳）"}
+    if act not in ("BUY", "SELL") or not sym or booked <= 0:
+        return {"status": "expire", "matched": None, "shares_delta": 0, "cost_delta": 0.0,
+                "note": "pending_verify 不完整 ⇒ 放棄（需人工對帳）"}
+
+    side = "B" if act == "BUY" else "S"
+    qty_key = "qty_bm" if act == "BUY" else "qty_sm"
+
+    def _num(v):
+        try:
+            return int(float(str(v).replace(",", "").strip()))
+        except (TypeError, ValueError):
+            return 0
+
+    matched = None
+    src = ""
+    try:
+        hits = [r for r in (tx_rows or []) if isinstance(r, dict)
+                and str(r.get("stk_no") or "").strip() == sym
+                and str(r.get("buy_sell") or "").strip().upper() == side]
+        if hits:
+            matched = sum(_num(r.get("qty")) for r in hits)
+            src = f"transactions ×{len(hits)}"
+    except Exception:
+        matched = None
+    if matched is None:
+        try:
+            hits = [r for r in (inv_rows or []) if isinstance(r, dict)
+                    and str(r.get("stk_no") or "").strip() == sym]
+            if hits:
+                matched = sum(_num(r.get(qty_key)) for r in hits)
+                src = f"inventories.{qty_key}"
+        except Exception:
+            matched = None
+
+    if matched is None:
+        # 2026-11-23（v1.1.47）：**快照檔存在且沒有錯誤** ⇒ 視為「這筆真的沒成交」。
+        #   理由：模擬券商沒有成交就不回任何紀錄（11/10–11/19、11/23 快照全空 ⇔ 那幾天確實沒有成交），
+        #   一直「等」的結果是帳本停在錯的數字（11/23 的 6,000 股就是這樣憑空消失的）。
+        #   只有在「快照檔還沒產生」或「快照本身有錯誤（API 失敗）」時才繼續等。
+        _snap_error = False
+        _snap_present = isinstance(snapshot, dict)
+        if _snap_present:
+            try:
+                _errs = snapshot.get("errors")
+                _snap_error = bool(_errs) or (snapshot.get("ok") is False)
+            except Exception:
+                _snap_error = False
+        if _snap_present and not _snap_error:
+            matched = 0
+            _note_empty = "（快照檔存在但沒有此檔成交紀錄 ⇒ 視為沒成交）"
+            if act == "BUY":
+                delta_sh = 0 - booked
+                delta_cost = float(delta_sh) * float(price)
+            else:
+                delta_sh = booked - 0
+                delta_cost = float(delta_sh) * float(avg or price)
+            return {"status": "ok", "matched": 0,
+                    "shares_delta": int(delta_sh), "cost_delta": delta_cost,
+                    "note": f"{act} 送 {booked:,} 股、券商 0 股成交{_note_empty}"
+                            f" ⇒ 帳本修正 {delta_sh:+,} 股"}
+        pv_date = str(pv.get("date") or "")[:10]
+        tday = str(today or "")[:10]
+        try:
+            age = (datetime.date.fromisoformat(tday) - datetime.date.fromisoformat(pv_date)).days
+        except Exception:
+            age = 0
+        if age >= int(max_days):
+            return {"status": "expire", "matched": None, "shares_delta": 0, "cost_delta": 0.0,
+                    "note": f"券商快照連續 {age} 天沒有這筆成交紀錄 ⇒ 放棄自動收斂（需人工對帳）"}
+        return {"status": "keep", "matched": None, "shares_delta": 0, "cost_delta": 0.0,
+                "note": ("券商快照本身有錯誤（API 失敗）⇒ 明天再試" if _snap_error
+                         else "券商快照還沒產生 ⇒ 明天再試")}
+
+    matched = max(0, int(matched))
+    if act == "BUY":
+        delta_sh = matched - booked
+        delta_cost = float(delta_sh) * float(price)
+    else:
+        delta_sh = booked - matched          # 沒賣掉的加回帳上
+        delta_cost = float(delta_sh) * float(avg or price)
+    note = (f"{act} 送 {booked:,} 股、券商成交量 {matched:,} 股（{src}）"
+            f" ⇒ 帳本修正 {delta_sh:+,} 股")
+    return {"status": "ok", "matched": matched, "shares_delta": int(delta_sh),
+            "cost_delta": delta_cost, "note": note}
+
+
+def unverified_sell_value(state) -> float:
+    """停泊「成交未確認」的**賣出金額合計**（`shares × price`）；沒有就 0（2026-11-25，v1.1.52）。
+
+    為什麼：`cash_available()` 的公式是「本金 − 持股成本 − 停泊成本」，賣出時停泊成本被清掉
+    ⇒ 賣出回款立刻被算成可用現金。但模擬環境 13:25 查不到成交（`resolve_fill()` 回 `None`），
+    2026-11-25 的 SELL 6,000 股**實際只成 1,000** ⇒ 現金被高估約 45 萬；
+    若同一天又有股票買訊，真錢上就是**交割款不足（違約）**。
+    ⇒ 這筆金額先從可用現金扣掉（隔天 pending 收斂後才會放回）。
+    """
+    st = state if isinstance(state, dict) else {}
+    pvs = st.get("pending_verifies")
+    if not isinstance(pvs, list):
+        one = st.get("pending_verify")
+        pvs = [one] if isinstance(one, dict) else []
+    total = 0.0
+    for pv in pvs:
+        if not isinstance(pv, dict):
+            continue
+        if str(pv.get("act") or "").upper() != "SELL":
+            continue
+        try:
+            total += float(pv.get("shares") or 0) * float(pv.get("price") or 0.0)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def released_today(records, date_str: str, symbol: str = "") -> bool:
+    """今天有沒有**停泊釋出（SELL）**紀錄（2026-11-25，v1.1.51）。
+
+    為什麼要有：11/25 同一窗口先釋出 6,000 股、5 分鐘後又把 4,000 股買回來（同價 90.30）——
+    純粹是白付手續費與證交稅（約 1,800 元），也讓帳本更難對。規則：**當天只要釋出過，
+    當天就不再買停泊**（B 閘門的擴充；B 原本只擋「自選股賣出」）。
+    `REPAIR` 不算（人工修帳不是交易）。
+    """
+    d = str(date_str or "")[:10]
+    if not d:
+        return False
+    for rec in records or []:
+        if not isinstance(rec, dict):
+            continue
+        if str(rec.get("action") or "").upper() != "SELL":
+            continue
+        if symbol and str(rec.get("symbol") or "") not in ("", symbol):
+            continue
+        if str(rec.get("ts") or rec.get("date") or "")[:10] == d:
+            return True
+    return False
+
+
 def load_state(path: str | Path = STATE_PATH) -> dict:
     """讀停泊帳本；不存在或壞掉一律回空狀態（不讓停泊擋住交易）。
 
@@ -170,10 +409,23 @@ def load_state(path: str | Path = STATE_PATH) -> dict:
             _ts = float(d.get("last_park_ts") or 0.0)
         except (TypeError, ValueError):
             _ts = 0.0
+        # 2026-11-23（v1.1.46）：`pending_verify` 必須保留——停泊「成交未確認」時的待對帳紀錄，
+        #   丟掉它就等於永遠算不回真實股數（見 `reconcile_pending()` 的說明）。
+        # 2026-11-25（v1.1.51）：**改成佇列**（`pending_verifies: [...]`）。舊版只有單一欄位，
+        #   11/25 同一窗口先 SELL 6,000、後 BUY 4,000 ⇒ 買進那筆把賣出的待對帳蓋掉 ⇒ 少對 5,000 股。
+        _pvs = d.get("pending_verifies")
+        if not isinstance(_pvs, list):
+            _pvs = []
+            _legacy = d.get("pending_verify")
+            if isinstance(_legacy, dict):
+                _pvs = [_legacy]
+        _pvs = [x for x in _pvs if isinstance(x, dict)]
         return {"symbol": str(d.get("symbol") or ""), "shares": int(d.get("shares") or 0),
                 "cost": float(d.get("cost") or 0.0),
                 "opened": d.get("opened"), "updated": d.get("updated"),
-                "last_park_date": d.get("last_park_date"), "last_park_ts": _ts}
+                "last_park_date": d.get("last_park_date"), "last_park_ts": _ts,
+                "pending_verify": (_pvs[0] if _pvs else None),   # 相容舊呼叫端
+                "pending_verifies": _pvs}
     except Exception:
         return {"symbol": "", "shares": 0, "cost": 0.0, "last_park_ts": 0.0}
 

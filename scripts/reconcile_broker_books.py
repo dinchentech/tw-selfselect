@@ -81,7 +81,9 @@ def _num(v, default=0.0):
 def parse_inventories(raw):
     """券商庫存 → `{代號: {"qty": int, "price": float, "cost": float, "name": str}}`。
 
-    ⚠️ 股數一律取 `qty_b`（見 `EsunProvider.query_inventories` 的單位陷阱說明）；
+    ⚠️ 股數優先取 `qty_bm`（成交量），沒有才退回 `qty_b`（委託量）再退回 `cost_qty`。
+    2026-11-23（v1.1.46）：模擬環境 `qty_b` 是**委託量**、`qty_bm` 才是成交量
+    （11/20 實證 `qty_b=2000`／`qty_bm=1000`，舊版因此把「只成交 1,000 股」報成 2,000）。
     零股列的 `stk_dats[].qty` 是「以 1 股為單位」的表示，不可當總數。
     """
     out = {}
@@ -91,9 +93,11 @@ def parse_inventories(raw):
         sym = str(row.get("stk_no") or "").strip()
         if not sym:
             continue
-        qty = int(_num(row.get("qty_b")))
+        qty = int(_num(row.get("qty_bm")))
         if qty <= 0:
-            # 沒有 qty_b 就退回 cost_qty（整股列兩者相同；零股列 qty_b 才是總數）
+            qty = int(_num(row.get("qty_b")))
+        if qty <= 0:
+            # 成交量／委託量都沒有就退回 cost_qty（整股列三者相同；零股列以 qty_b 為總數）
             qty = int(_num(row.get("cost_qty")))
         out[sym] = {"qty": qty, "price": _num(row.get("price_avg")),
                     "cost": abs(_num(row.get("cost_sum"))),

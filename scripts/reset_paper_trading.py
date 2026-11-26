@@ -60,6 +60,14 @@ STATE_FILES = (
     'processed_capital.json',
     'voided_trades.jsonl',
     'books_audit.jsonl',
+    # 2026-11-26（v1.1.54）：**停泊帳與待對帳也要清**。原本漏掉 ⇒ 「從零重來」後
+    #   `park_position.json` 仍留著 9,000 股（成本 825,575），帳面總成本繼續超過本金
+    #   （2026-11-26 實測：持股 617,555 ＋ 停泊 825,575 ＝ 1,443,130 > 本金 100 萬）。
+    'park_position.json',
+    'park_trades.jsonl',
+    'park_plan.json',
+    'stock_pending.json',
+    'entry_attempts.json',
 )
 
 ENV_KEYS = ('TOTAL_CAPITAL', 'TOTAL_CAPITAL_ORIGINAL', 'INITIAL_CAPITAL')

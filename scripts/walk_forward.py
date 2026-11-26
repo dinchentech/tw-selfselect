@@ -152,13 +152,16 @@ def neighbor_grid(paths) -> list[dict]:
 #: 會改變回測結果的選股／口徑旋鈕（用來組快取檔名；漏掉任何一個就會沿用舊結果）。
 _CACHE_KNOBS = ("SCORING_MODEL", "FACTOR_REVENUE", "MAX_PER_SECTOR", "UNIVERSE_DELISTED",
                 "Z_OVERHEAT", "NONMOM_SLOTS", "PRERANK_R63_PCT", "W_DIST",
-                "PICK_COOLDOWN_MONTHS", "OH_ENTRY_MODE", "MAX_PCT_FROM_HIGH", "MIN_OVERHEAT")
+                "PICK_COOLDOWN_MONTHS", "OH_ENTRY_MODE", "MAX_PCT_FROM_HIGH", "MIN_OVERHEAT",
+                # 2026-11-24：停泊 A+C 與 breakout 出場確認——沒進快取鍵就會兩個口徑撞同一檔
+                "PARK_MA200", "BREAKOUT_CONFIRM_DAYS", "BREAKOUT_MA_CONFIRM")
 #: 每個旋鈕「程式碼裡的預設值」——快取鍵要用**生效值**，不能只用「有沒有設」，
 #: 否則「預設 1 卻沒寫在 env」與「舊版預設 0」會撞在同一個檔名（2026-10-31 踩到：Z_OVERHEAT 改預設後整套沿用舊結果）。
 _CACHE_DEFAULTS = {"SCORING_MODEL": "zscore", "FACTOR_REVENUE": "0", "MAX_PER_SECTOR": "0",
                    "UNIVERSE_DELISTED": "0", "Z_OVERHEAT": "1", "NONMOM_SLOTS": "0",
                    "PRERANK_R63_PCT": "0", "W_DIST": "0", "PICK_COOLDOWN_MONTHS": "0",
-                   "OH_ENTRY_MODE": "both", "MAX_PCT_FROM_HIGH": "7", "MIN_OVERHEAT": "2"}
+                   "OH_ENTRY_MODE": "both", "MAX_PCT_FROM_HIGH": "7", "MIN_OVERHEAT": "2",
+                   "PARK_MA200": "0", "BREAKOUT_CONFIRM_DAYS": "0", "BREAKOUT_MA_CONFIRM": "0"}
 
 
 def _mode_tag() -> str:
@@ -171,7 +174,14 @@ def _mode_tag() -> str:
     mode = os.getenv("STRAT_MODE", "group")
     imm = "imm" if os.getenv("IMM_OVERHEAT", "0") == "1" else "noimm"
     extra = "".join(f"_{k.lower()}-{os.getenv(k) or _CACHE_DEFAULTS[k]}" for k in _CACHE_KNOBS)
-    return f"{mode}_{imm}{extra}"
+    tag = f"{mode}_{imm}{extra}"
+    # 2026-11-24：旋鈕愈來愈多，tag 會超過檔名上限（255 bytes）⇒ OSError: File name too long
+    #   （加了 PARK_MA200／BREAKOUT_CONFIRM_DAYS／BREAKOUT_MA_CONFIRM 後實測炸掉）。
+    #   過長就只留「模式＋旋鈕組合的 sha1 前 12 碼」；完整旋鈕清單仍在 `wf_*.json` 的 `config.knobs`。
+    if len(tag) > 110:
+        import hashlib
+        tag = f"{mode}_{imm}_{hashlib.sha1(tag.encode('utf-8')).hexdigest()[:12]}"
+    return tag
 
 
 def _cache_path(combo: str, start: str, end: str) -> Path:

@@ -219,8 +219,13 @@ def unknown_order_blocks_buy(symbol, recs, today_str):
 def broker_holding_qty(broker, symbol):
     """券商庫存股數（唯讀）；查不到回 `None`。
 
-    股數一律取 `qty_b`：零股列的 `stk_dats[].qty` 是「以 1 股為單位」的表示，不可當總數
-    （見 `scripts/reconcile_broker_books.py` 的單位陷阱說明）。
+    股數優先取 `qty_bm`（**成交量**），沒有才退回 `qty_b`（委託量）再退回 `cost_qty`。
+
+    為什麼改（2026-11-23，v1.1.46）：模擬環境的庫存列 `qty_b` 是**委託量**、`qty_bm` 才是**成交量**。
+    2026-11-20 實證：`qty_b=2000 / qty_bm=1000 / cost_qty=1000`（實際只成交 1,000 股），
+    舊版取 `qty_b` 就報「券商 2,000 股」⇒ 高估庫存、讓對帳訊息失真。
+    ⚠️ 真錢上線前要在真實券商資料上確認這兩個欄位的語意（已列 `cairn/total-assets-reconciliation.md` 開放問題）。
+    零股列的 `stk_dats[].qty` 是「以 1 股為單位」的表示，仍不可當總數。
     """
     q = getattr(broker, "query_inventories", None)
     if q is None:
@@ -243,7 +248,9 @@ def broker_holding_qty(broker, symbol):
             continue
         if str(row.get("stk_no") or "").strip() != str(symbol).strip():
             continue
-        qty = int(_num(row.get("qty_b")))
+        qty = int(_num(row.get("qty_bm")))
+        if qty <= 0:
+            qty = int(_num(row.get("qty_b")))
         if qty <= 0:
             qty = int(_num(row.get("cost_qty")))
         return qty

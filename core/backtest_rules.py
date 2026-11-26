@@ -182,7 +182,8 @@ def strategy_after_exit(locked, shares):
 
 def caliber_tag(exec_mode, *, dca=0.0, lock_at="fill", rebal_months=1, top_n=5, fixed_n=0,
                 leverage=1.0, scale_to_util=0.0, market_filter=False, mf_window=200,
-                idle_cash_asset="", fill_mode="proportional", scoring_model="legacy",
+                idle_cash_asset="", park_ma200=False, bo_confirm=0, bo_ma=False,
+                fill_mode="proportional", scoring_model="legacy",
                 factor_revenue=True, max_per_sector=0, delisted=True, pool_n=50,
                 strat_mode="form") -> str:
     """`results/*.json`、`daily_*`／`exposure_*` CSV 的**口徑後綴**（不含窗口、前綴、副檔名）。
@@ -206,6 +207,9 @@ def caliber_tag(exec_mode, *, dca=0.0, lock_at="fill", rebal_months=1, top_n=5, 
         + (f"_scale{scale_to_util:g}" if scale_to_util and scale_to_util > 0 else "") \
         + (f"_mf{mf_window}" if market_filter else "") \
         + (f"_park{idle_cash_asset}" if idle_cash_asset else "") \
+        + ("_parkma200" if park_ma200 else "") \
+        + (f"_bo{bo_confirm}" if bo_confirm and int(bo_confirm) >= 2 else "") \
+        + ("_boma" if bo_ma else "") \
         + (f"_fill{fill_mode}" if fill_mode != "proportional" else "") \
         + (f"_score{scoring_model}" if scoring_model != "legacy" else "") \
         + ("_norev" if (scoring_model == "zscore" and not factor_revenue) else "") \
@@ -239,7 +243,8 @@ ENV_OVERRIDE_KEYS = (
     "OH_ENTRY_MODE", "HOT_EXIT", "HOT_EXIT_GROUPS", "HOT_TP_PCT", "HOT_TRAIL_PCT",
     "HOT_THRESHOLD", "GROUPS_ONLY",
     # 2026-10-28 新旋鈕（換股頻率／大盤年線／閒置停泊／部位放大／口徑 profile／固定名單）
-    "REBAL_MONTHS", "MARKET_FILTER", "MF_WINDOW", "IDLE_CASH_ASSET", "PARK_COST",
+    "REBAL_MONTHS", "MARKET_FILTER", "MF_WINDOW", "IDLE_CASH_ASSET", "PARK_COST", "PARK_MA200",
+    "BREAKOUT_CONFIRM_DAYS", "BREAKOUT_MA_CONFIRM",
     "LEVERAGE", "SCALE_TO_UTIL", "MARGIN_RATE", "PROFILE", "POOL_FIXED",
     "FILL_MODE", "SELFSELECT_FILL_MODE",
     # 2026-10-29：選股口徑（評分模型／因子／宇宙）——這些也必須「明示優先」，
