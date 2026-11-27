@@ -5,7 +5,7 @@ summary: "部署到 GCP VM 的完整流程（deploy_source.sh 建 image → SSH 
 tags: [部署, VM, cron, watchdog, 事故, 儀表板]
 contains: [experience, procedure, lesson, open_question]
 created: "2026-10-27"
-updated: "2026-10-29"
+updated: "2026-11-27"
 related: [environment-scope.md, total-assets-reconciliation.md]
 authoring_mode: ai_generated
 ---
@@ -106,7 +106,7 @@ GitHub Pages → Settings → Pages → Source =「Deploy from a branch」→ br
 > ⚠️ **公開的是完整儀表板**：持股股數、平均成本、總資產都會上網、可能被搜尋引擎索引。
 > 目前 `ESUN_ENVIRONMENT=simulation`（假錢）無妨；**切 `real` 前必須改回 `0`**（或自行改成脫敏版）。
 
-### 動 `.env` 的兩個鐵則（2026-10-29 實證）
+### 動 `.env` 的四個鐵則（2026-10-29／11-27 實證）
 
 1. **追加前先確認結尾有換行**：VM 的 `.env` 最後一行（`PC_…`）常常沒有 trailing newline，直接 `>>` 會把新內容黏在
    最後一行上，等於**弄壞那個 `PC_` 的 JSON**（live 設定直接壞掉，而且不會報錯）。正確做法：
@@ -114,6 +114,14 @@ GitHub Pages → Settings → Pages → Source =「Deploy from a branch」→ br
 2. **改完一定備份**：`cp .env .env.bak_<原因>_$(date +%Y%m%d-%H%M%S)`（VM 上已有多份）。
    主程式會偵測 `.env` 指紋變化並**熱重載**（log 會印「偵測到 .env 內容變更 ⇒ 套用」「目前監控 N 檔」），
    所以壞內容會**立刻**生效 ⇒ 備份與驗證不可省。
+3. **單檔 bind mount 必須「就地覆寫」**（2026-11-27 實證）：`./.env:/app/.env` 綁的是 **inode**，
+   用 `mv` 或 `scp` 覆蓋會換掉 inode ⇒ 容器裡看到的還是舊檔（而且沒有錯誤訊息）。
+   正確：先寫暫存檔、比 md5，再 `cat /tmp/new.env > ~/tw-selfselect/.env`，最後
+   `md5sum` 兩端比對 **＋** `docker exec <c> md5sum /app/.env` 三方一致。
+4. **VM 收盤後會自動關機 ⇒ 同步要挑時段**（2026-11-27 實證）：約 14:00 起 `TERMINATED`，
+   此時 `gcloud compute ssh`／`scp` 全部卡住（不是權限問題，別往認證方向查）。
+   改 `.env` 不必趕：容器啟動時 `load_dotenv(override=True)` 直接讀檔、每天 08:40 也有熱重載
+   ⇒ 只要在下一個交易日的 **13:25 下單窗口之前**放上去就生效。要當天做就得先手動開機。
 
 ### VM 上三個 root 層守門員
 
